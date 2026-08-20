@@ -1,0 +1,19 @@
+{
+  "id": "sensor-roundtrip",
+  "name": "Trigger then read result",
+  "description": "Connect, enable notify, write a trigger, wait for a notification, then read another characteristic. Pause for a physical action in the middle.",
+  "params": {
+    "address": "[1]D1:79:29:DB:CB:CC",
+    "test_hex": "01"
+  },
+  "steps": [
+    {"op": "connect", "address": "{{address}}"},
+    {"op": "notify_on", "uuid": "6e400003-b5a3-f393-e0a9-e50e24dcca9e"},
+    {"op": "write", "uuid": "6e400002-b5a3-f393-e0a9-e50e24dcca9e", "hex": "{{test_hex}}"},
+    {"op": "wait_notify", "uuid": "6e400003-b5a3-f393-e0a9-e50e24dcca9e", "timeout_ms": 5000, "continue_on_error": true},
+    {"op": "read", "uuid": "2a00", "save_as": "name"},
+    {"op": "pause", "message": "Press the device button, then Continue"},
+    {"op": "read", "uuid": "2a19", "save_as": "battery", "continue_on_error": true},
+    {"op": "disconnect"}
+  ]
+}

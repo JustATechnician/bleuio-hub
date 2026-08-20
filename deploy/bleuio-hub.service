@@ -1,0 +1,21 @@
+[Unit]
+Description=BleuIO multi-user hub
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=dialout
+WorkingDirectory=/home/pi/bleuio-hub
+Environment=BLEUIO_HOST=0.0.0.0
+Environment=BLEUIO_PORT=8000
+# Uncomment to force mock stations (no hardware):
+# Environment=BLEUIO_MOCK=1
+# Uncomment to fail instead of falling back to mock when no dongles are found:
+# Environment=BLEUIO_MOCK=0
+ExecStart=/home/pi/bleuio-hub/.venv/bin/python -m app
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

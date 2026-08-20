@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BleuIO Hub</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <span class="mark"></span>
+        <div>
+          <h1>BleuIO Hub</h1>
+          <p id="subtitle">Claim a dongle to scan, inspect advertisements, and test GATT.</p>
+        </div>
+      </div>
+      <div class="top-meta">
+        <span id="mode-badge" class="badge">…</span>
+        <button id="btn-refresh" class="ghost" type="button">Rescan dongles</button>
+        <button id="btn-lobby" class="ghost hidden" type="button">Lobby</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="view-lobby" class="view"></section>
+      <section id="view-station" class="view hidden">
+        <div class="station-bar">
+          <div>
+            <h2 id="station-title">Station</h2>
+            <p id="station-meta" class="muted"></p>
+          </div>
+          <div class="row">
+            <button id="btn-release" class="danger" type="button">Release</button>
+          </div>
+        </div>
+        <nav class="tabs">
+          <button data-tab="scan" class="tab active" type="button">Scan</button>
+          <button data-tab="gatt" class="tab" type="button">GATT</button>
+          <button data-tab="macros" class="tab" type="button">Macros</button>
+          <button data-tab="log" class="tab" type="button">Log</button>
+        </nav>
+        <div id="tab-scan" class="tab-panel"></div>
+        <div id="tab-gatt" class="tab-panel hidden"></div>
+        <div id="tab-macros" class="tab-panel hidden"></div>
+        <div id="tab-log" class="tab-panel hidden"></div>
+      </section>
+    </main>
+
+    <div id="modal" class="modal hidden">
+      <div class="dialog" id="modal-body"></div>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

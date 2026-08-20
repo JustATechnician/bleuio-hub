@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.python-version
+logs/*.jsonl
+logs/*.json
+!logs/.gitkeep
+.DS_Store
+*.log
+.idea/
+.vscode/

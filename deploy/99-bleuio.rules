@@ -1,0 +1,3 @@
+# BleuIO USB dongles (Smart Sensor Devices)
+# Application firmware is 2dcf:6002; bootloader is 2dcf:6001 for ~10-15s after plug-in.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2dcf", MODE="0660", GROUP="dialout"
