@@ -145,6 +145,11 @@ class Station(ABC):
         ...
 
     @abstractmethod
+    async def reset_idle(self) -> dict[str, Any]:
+        """Drop BLE links and scan, then mark this station idle (serial stays open)."""
+        ...
+
+    @abstractmethod
     async def read(self, handle_or_uuid: str) -> dict[str, Any]:
         ...
 

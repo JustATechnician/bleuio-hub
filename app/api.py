@@ -106,14 +106,30 @@ async def heartbeat(request: Request) -> JSONResponse:
     return hub.attach_cookie(JSONResponse({"ok": True, "station": session.station_id}), session, created)
 
 
+async def _idle_station(station_id: str) -> None:
+    try:
+        station = hub.manager.get(station_id)
+    except KeyError:
+        return
+    try:
+        if station.macro_run_id:
+            hub.macros.request_cancel(station_id)
+        await station.reset_idle()
+    except Exception:
+        log.exception("failed to idle station %s", station_id)
+
+
 @router.post("/api/stations/{station_id}/claim")
 async def claim(station_id: str, request: Request) -> JSONResponse:
     session, created = hub.session_from_request(request)
     hub.station(station_id)
+    previous = session.station_id
     try:
         hub.sessions.claim(station_id, session)
     except PermissionError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    if previous and previous != station_id:
+        await _idle_station(previous)
     return hub.attach_cookie(
         JSONResponse({"ok": True, "station": hub.station_public(hub.station(station_id), session)}),
         session,
@@ -129,17 +145,12 @@ async def release(station_id: str, request: Request) -> JSONResponse:
         hub.sessions.release(station_id, session)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
-    try:
-        if station.macro_run_id:
-            hub.macros.request_cancel(station_id)
-        await station.disconnect()
-    except Exception:
-        pass
-    try:
-        await station.stop_scan()
-    except Exception:
-        pass
-    return hub.attach_cookie(JSONResponse({"ok": True}), session, created)
+    await _idle_station(station_id)
+    return hub.attach_cookie(
+        JSONResponse({"ok": True, "station": hub.station_public(station, session)}),
+        session,
+        created,
+    )
 
 
 def _owner_station(request: Request, station_id: str):
@@ -424,9 +435,7 @@ async def idle_reaper() -> None:
             except KeyError:
                 continue
             try:
-                hub.macros.request_cancel(station_id)
-                await station.disconnect()
-                await station.stop_scan()
+                await _idle_station(station_id)
             except Exception:
                 pass
             await hub.broadcast(station_id, {"type": "released", "reason": "idle"})

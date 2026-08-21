@@ -188,6 +188,44 @@ class BleuIoStation(Station):
         except Exception:
             pass
 
+    def _mark_idle(self, *, clear_devices: bool = False, raw: str = "") -> str | None:
+        addr = self.connected_addr
+        self.scanning = False
+        self.connected = False
+        self.connected_addr = None
+        self.services = []
+        if clear_devices:
+            self.devices = {}
+        self.emit("connection", connected=False, address=addr, raw=raw)
+        self.emit("station", station=self.snapshot())
+        return addr
+
+    def _radio_idle(self) -> list[str]:
+        """Stop scan and drop every GAP connection. Serial stays open."""
+        errors: list[str] = []
+        dongle = self._dongle
+        if not dongle:
+            return errors
+        try:
+            dongle.stop_scan()
+        except Exception as exc:
+            errors.append(f"stop_scan: {exc}")
+        try:
+            if hasattr(dongle, "at_gapdisconnectall"):
+                dongle.at_gapdisconnectall()
+            else:
+                dongle.at_gapdisconnect()
+        except Exception as exc:
+            errors.append(f"gapdisconnect: {exc}")
+        return errors
+
+    def _do_reset_idle(self) -> dict[str, Any]:
+        errors = self._radio_idle()
+        self._mark_idle(clear_devices=True)
+        if errors:
+            log.warning("reset_idle on %s: %s", self.id, "; ".join(errors))
+        return {"ok": not errors, "errors": errors}
+
     def _on_scan(self, scan_input: Any) -> None:
         parsed = parse_scan_payload(scan_input)
         if not parsed:
@@ -208,13 +246,8 @@ class BleuIoStation(Station):
         if "passkey" in lower:
             self.emit("passkey", needed=True, raw=text)
         if "disconnected" in lower or "gap_disconnected" in lower:
-            self.connected = False
-            addr = self.connected_addr
-            self.connected_addr = None
-            self.services = []
-            self.emit("connection", connected=False, address=addr, raw=text)
-            self.emit("station", station=self.snapshot())
-        if "connected" in lower and "disconnected" not in lower:
+            self._mark_idle(raw=text)
+        elif self.connected_addr and "connected" in lower:
             self.connected = True
             self.emit("connection", connected=True, address=self.connected_addr, raw=text)
         if "noti" in lower or "indication" in lower or "handle_evt_gattc_notification" in lower:
@@ -307,14 +340,20 @@ class BleuIoStation(Station):
         return {"ok": True, "address": address, "services": services}
 
     def _do_disconnect(self) -> dict[str, Any]:
-        resp = self._dongle.at_gapdisconnect()
-        self.connected = False
-        addr = self.connected_addr
-        self.connected_addr = None
-        self.services = []
-        self.emit("connection", connected=False, address=addr, raw=collect_text(resp))
-        self.emit("station", station=self.snapshot())
-        return {"ok": True}
+        resp = None
+        err = None
+        try:
+            resp = self._dongle.at_gapdisconnect()
+        except Exception as exc:
+            err = str(exc)
+            try:
+                if hasattr(self._dongle, "at_gapdisconnectall"):
+                    self._dongle.at_gapdisconnectall()
+                    err = None
+            except Exception as exc2:
+                err = str(exc2)
+        self._mark_idle(raw=collect_text(resp) if resp is not None else err or "")
+        return {"ok": not err, "error": err}
 
     def _handle(self, handle_or_uuid: str) -> str:
         char = resolve_handle(self.services, handle_or_uuid)
@@ -466,6 +505,14 @@ class BleuIoStation(Station):
 
     async def disconnect(self) -> dict[str, Any]:
         return await self._call("disconnect")
+
+    async def reset_idle(self) -> dict[str, Any]:
+        try:
+            return await self._call("reset_idle")
+        except Exception as exc:
+            log.warning("reset_idle failed on %s: %s", self.id, exc)
+            self._mark_idle(clear_devices=True, raw=str(exc))
+            return {"ok": False, "error": str(exc)}
 
     async def read(self, handle_or_uuid: str) -> dict[str, Any]:
         return await self._call("read", handle_or_uuid)

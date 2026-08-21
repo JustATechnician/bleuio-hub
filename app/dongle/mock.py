@@ -273,6 +273,13 @@ class MockStation(Station):
             self.emit("station", station=self.snapshot())
             return {"ok": True}
 
+    async def reset_idle(self) -> dict[str, Any]:
+        await self.stop_scan()
+        result = await self.disconnect()
+        self.devices = {}
+        self.emit("station", station=self.snapshot())
+        return result
+
     def _require_char(self, handle_or_uuid: str) -> dict[str, Any]:
         if not self.connected:
             raise RuntimeError("Not connected")

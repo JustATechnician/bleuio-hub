@@ -103,13 +103,15 @@ Firmware: BleuIO Standard 2.2.1 or later (2.7.x recommended). BleuIO Pro is supp
 
 Built-in macros appear in the Macros tab. Custom macros are JSON files in `macros/`. Example: [`macros/sensor-roundtrip.json`](macros/sensor-roundtrip.json).
 
-Step ops: `scan`, `connect`, `disconnect`, `read`, `write`, `write_cmd`, `notify_on` / `notify_off`, `indicate_on` / `indicate_off`, `read_all`, `write_all`, `probe_permissions`, `verify_adv`, `advertised_vs_gatt`, `delay`, `pause`, `wait_notify`, `wait_adv`, `assert`, `log`.
+**Authoring guide:** [macros/README.md](macros/README.md) — how to add a custom macro (UI, file, or API), every step `op` and its fields, placeholders, logs, and how to add a new step type in the engine.
+
+Step ops: `scan`, `connect`, `disconnect`, `read`, `write`, `write_cmd`, `notify_on` / `notify_off`, `indicate_on` / `indicate_off`, `read_all`, `write_all`, `probe_permissions`, `verify_adv`, `advertised_vs_gatt`, `delay`, `pause`, `wait_notify`, `wait_adv`, `wait_passkey`, `assert`, `log`.
 
 `{{param}}` placeholders are substituted from the run form. `pause` waits until Continue in the UI. Each run writes `logs/<run_id>.jsonl`.
 
 ## Layout
 
 - `app/` — FastAPI backend, dongle workers, macro engine, static UI
-- `macros/` — user JSON macros
+- `macros/` — user JSON macros and the [authoring guide](macros/README.md)
 - `logs/` — run logs (gitignored)
 - `deploy/` — systemd unit and udev rules
