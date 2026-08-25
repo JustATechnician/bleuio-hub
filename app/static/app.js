@@ -13,9 +13,23 @@ const state = {
   macroId: null,
   run: null,
   ws: null,
-  scanDuration: 8,
-  scanFilter: "",
+  scanDefaultSec: 8,
+  stationPrefs: {},
 };
+
+function stationPrefs(stationId) {
+  if (!stationId) {
+    return { scanDuration: state.scanDefaultSec, scanFilter: "", selectedAddr: null };
+  }
+  if (!state.stationPrefs[stationId]) {
+    state.stationPrefs[stationId] = {
+      scanDuration: state.scanDefaultSec,
+      scanFilter: "",
+      selectedAddr: null,
+    };
+  }
+  return state.stationPrefs[stationId];
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -70,7 +84,7 @@ async function loadLobby() {
   const data = await api("/api/stations");
   state.mock = data.mock;
   state.stations = data.stations || [];
-  if (data.scan_default_sec != null) state.scanDuration = Number(data.scan_default_sec);
+  if (data.scan_default_sec != null) state.scanDefaultSec = Number(data.scan_default_sec);
   $("mode-badge").textContent = data.mock ? "Mock stations" : `${state.stations.length} dongle(s)`;
   $("mode-badge").className = "badge" + (data.mock ? " warn" : " ok");
   if (!state.stationId) renderLobby();
@@ -140,10 +154,22 @@ async function openStation(id) {
 }
 
 function hydrateStation(station) {
+  const prefs = stationPrefs(station.id);
   state.connectedAddr = station.connected_addr;
   state.services = station.services || [];
   state.devices = {};
   for (const d of station.devices || []) state.devices[d.addr] = d;
+  state.selectedAddr = prefs.selectedAddr;
+  if (state.selectedAddr && !state.devices[state.selectedAddr]) {
+    const addrs = Object.keys(state.devices);
+    if (addrs.length === 1) {
+      state.selectedAddr = addrs[0];
+      prefs.selectedAddr = addrs[0];
+    } else {
+      state.selectedAddr = null;
+      prefs.selectedAddr = null;
+    }
+  }
 }
 
 async function releaseStation(id) {
@@ -290,18 +316,40 @@ function renderAll() {
 }
 
 function deviceList() {
-  return Object.values(state.devices).sort((a, b) => (a.rssi ?? -999) - (b.rssi ?? -999)).reverse();
+  const prefs = stationPrefs(state.stationId);
+  const macNeedle = (prefs.scanFilter || "").replace(/[\s:-]/g, "").toUpperCase();
+  const isMacFilter = macNeedle.length >= 4 && /^[0-9A-F]+$/.test(macNeedle) && !macNeedle.startsWith("0X");
+  return Object.values(state.devices)
+    .filter((d) => {
+      if (!isMacFilter) return true;
+      const addr = String(d.addr || "").replace(/[\[\]:]/g, "").toUpperCase();
+      return addr.includes(macNeedle);
+    })
+    .sort((a, b) => (a.rssi ?? -999) - (b.rssi ?? -999))
+    .reverse();
+}
+
+function dongleScanFilter() {
+  const prefs = stationPrefs(state.stationId);
+  const raw = (prefs.scanFilter || "").trim();
+  const compact = raw.replace(/[\s:-]/g, "").toUpperCase();
+  const looksMac = compact.length >= 4 && /^[0-9A-F]+$/.test(compact) && !compact.startsWith("0X");
+  return looksMac ? "" : raw.replace(/\s+/g, "");
 }
 
 function syncScanToolbar() {
+  if (!state.stationId) return;
+  const prefs = stationPrefs(state.stationId);
   const durEl = $("scan-dur");
   const filterEl = $("scan-filter");
-  if (durEl) state.scanDuration = Number(durEl.value) || 0;
-  if (filterEl) state.scanFilter = filterEl.value;
+  if (durEl) prefs.scanDuration = Number(durEl.value) || 0;
+  if (filterEl) prefs.scanFilter = filterEl.value;
 }
 
 function renderScan() {
+  if (!state.stationId) return;
   syncScanToolbar();
+  const prefs = stationPrefs(state.stationId);
   const selected = state.devices[state.selectedAddr];
   const rows = deviceList()
     .map((d) => {
@@ -318,8 +366,8 @@ function renderScan() {
     <div class="toolbar">
       <button id="scan-start" class="primary" type="button">Start scan</button>
       <button id="scan-stop" type="button">Stop</button>
-      <input id="scan-dur" type="number" min="0" value="${state.scanDuration}" title="Seconds; 0 = until stop" />
-      <input id="scan-filter" placeholder="hex filter (optional)" value="${esc(state.scanFilter)}" />
+      <input id="scan-dur" type="number" min="0" value="${prefs.scanDuration}" title="Seconds; 0 = until stop" />
+      <input id="scan-filter" placeholder="MAC or hex filter" value="${esc(prefs.scanFilter)}" title="MAC substring filters the list; hex is sent to the dongle (AT+FINDSCANDATA)" />
       <span class="muted">${Object.keys(state.devices).length} device(s)</span>
     </div>
     <div class="split">
@@ -557,9 +605,13 @@ function collectParams() {
 
 document.addEventListener("input", (ev) => {
   const t = ev.target;
-  if (!(t instanceof HTMLElement)) return;
-  if (t.id === "scan-dur") state.scanDuration = Number(t.value) || 0;
-  if (t.id === "scan-filter") state.scanFilter = t.value;
+  if (!(t instanceof HTMLElement) || !state.stationId) return;
+  const prefs = stationPrefs(state.stationId);
+  if (t.id === "scan-dur") prefs.scanDuration = Number(t.value) || 0;
+  if (t.id === "scan-filter") {
+    prefs.scanFilter = t.value;
+    if (state.tab === "scan") renderScan();
+  }
 });
 
 document.addEventListener("click", async (ev) => {
@@ -579,15 +631,17 @@ document.addEventListener("click", async (ev) => {
     if (t.dataset.tab) setTab(t.dataset.tab);
     if (t.id === "scan-start") {
       syncScanToolbar();
+      const prefs = stationPrefs(state.stationId);
       await api(`/api/stations/${state.stationId}/scan/start`, {
         method: "POST",
-        body: { duration: state.scanDuration, filter: state.scanFilter },
+        body: { duration: prefs.scanDuration, filter: dongleScanFilter() },
       });
     }
     if (t.id === "scan-stop") await api(`/api/stations/${state.stationId}/scan/stop`, { method: "POST", body: {} });
     const addrRow = t.closest("[data-addr]");
     if (addrRow) {
       state.selectedAddr = addrRow.getAttribute("data-addr");
+      if (state.stationId) stationPrefs(state.stationId).selectedAddr = state.selectedAddr;
       renderScan();
       return;
     }
@@ -600,9 +654,10 @@ document.addEventListener("click", async (ev) => {
     }
     if (t.id === "btn-target" && state.selectedAddr) {
       syncScanToolbar();
+      const prefs = stationPrefs(state.stationId);
       await api(`/api/stations/${state.stationId}/scantarget`, {
         method: "POST",
-        body: { address: state.selectedAddr, duration: state.scanDuration },
+        body: { address: state.selectedAddr, duration: prefs.scanDuration },
       });
     }
     if (t.dataset.read) {
