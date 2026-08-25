@@ -48,9 +48,31 @@ class DongleManager:
             self.stations[station.id] = station
         log.info("Mock mode: %s stations", len(self.stations))
 
+    def _next_station_id(self) -> str:
+        n = len(self.stations) + 1
+        while f"dongle-{n}" in self.stations:
+            n += 1
+        return f"dongle-{n}"
+
+    async def _try_open_port(self, port: str, station_id: str) -> Station | None:
+        from app.dongle.worker import BleuIoStation
+
+        station = BleuIoStation(station_id, port)
+        station.bind_loop(self._loop)  # type: ignore[arg-type]
+        try:
+            await asyncio.wait_for(station.start(), timeout=12)
+            return station
+        except Exception as exc:
+            log.warning("Failed to open %s: %s", port, exc)
+            try:
+                await station.close()
+            except Exception:
+                log.debug("close after failed open on %s", port, exc_info=True)
+            return None
+
     async def _start_real(self) -> int:
         try:
-            from app.dongle.worker import BleuIoStation, list_candidate_ports
+            from app.dongle.worker import list_candidate_ports
         except Exception as exc:
             log.warning("Cannot import BleuIO worker: %s", exc)
             return 0
@@ -58,19 +80,9 @@ class DongleManager:
         log.info("Candidate serial ports: %s", ports)
         started = 0
         for index, port in enumerate(ports, start=1):
-            station_id = f"dongle-{index}"
-            station = BleuIoStation(station_id, port)
-            station.bind_loop(self._loop)  # type: ignore[arg-type]
-            try:
-                await asyncio.wait_for(station.start(), timeout=12)
-            except Exception as exc:
-                log.warning("Failed to open %s: %s", port, exc)
-                try:
-                    await station.close()
-                except Exception:
-                    pass
+            station = await self._try_open_port(port, f"dongle-{index}")
+            if not station:
                 continue
-            # If ATI didn't look like BleuIO, still keep it if mac/firmware populated or product set.
             self.stations[station.id] = station
             started += 1
             log.info("Opened %s as %s (mac=%s fw=%s)", port, station.id, station.mac, station.firmware)
@@ -81,27 +93,18 @@ class DongleManager:
         """Re-scan for dongles. Leaves claimed stations alone; adds newly found ports."""
         if self.mock:
             return {"mock": True, "stations": [s.snapshot() for s in self.all()]}
-        from app.dongle.worker import BleuIoStation, list_candidate_ports
+        from app.dongle.worker import list_candidate_ports
 
         existing_ports = {s.port for s in self.all()}
         added = []
         for port in list_candidate_ports():
             if port in existing_ports:
                 continue
-            station_id = f"dongle-{len(self.stations) + 1}"
-            # Avoid id collision
-            n = len(self.stations) + 1
-            while f"dongle-{n}" in self.stations:
-                n += 1
-            station_id = f"dongle-{n}"
-            station = BleuIoStation(station_id, port)
-            station.bind_loop(self._loop)  # type: ignore[arg-type]
-            try:
-                await asyncio.wait_for(station.start(), timeout=12)
-                self.stations[station.id] = station
-                added.append(station.snapshot())
-            except Exception as exc:
-                log.warning("refresh: failed %s: %s", port, exc)
+            station = await self._try_open_port(port, self._next_station_id())
+            if not station:
+                continue
+            self.stations[station.id] = station
+            added.append(station.snapshot())
         return {"added": added, "stations": [s.snapshot() for s in self.all()]}
 
     async def close(self) -> None:

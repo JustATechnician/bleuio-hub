@@ -7,16 +7,16 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from app.config import LOGS_DIR, MACROS_DIR, MACRO_STEP_TIMEOUT_SEC
 from app.dongle.base import Station
-from app.dongle.parser import advertised_uuids, flatten_characteristics, gatt_uuids, normalize_addr
+from app.dongle.parser import advertised_uuids, flatten_characteristics, gatt_uuids, normalize_addr, resolve_handle
 from app.gatt_names import lookup_name, normalize_uuid
 from app.macros.builtins import builtin_macros
 
 log = logging.getLogger(__name__)
-EmitFn = Callable[[dict[str, Any]], None]
+MAX_STORED_RUNS = 80
 
 
 def subst(value: Any, ctx: dict[str, Any]) -> Any:
@@ -346,6 +346,18 @@ class MacroEngine:
         if ev:
             ev.set()
 
+    def _prune_runs(self) -> None:
+        if len(self.runs) <= MAX_STORED_RUNS:
+            return
+        active = {r.id for r in self.runs.values() if r.status in {"running", "paused"}}
+        finished = sorted(
+            (r for r in self.runs.values() if r.id not in active),
+            key=lambda r: r.started,
+        )
+        excess = len(self.runs) - MAX_STORED_RUNS
+        for run in finished[:excess]:
+            self.runs.pop(run.id, None)
+
     def _emit(self, emit: Callable, event: dict[str, Any]) -> None:
         try:
             emit(event)
@@ -482,6 +494,7 @@ class MacroEngine:
                 },
             )
             run.append({"event": "finished", "status": run.status, "error": run.error})
+            self._prune_runs()
             station.emit("station", station=station.snapshot())
 
     async def _run_step(
@@ -652,8 +665,6 @@ def _run_assert(station: Station, step: dict[str, Any], ctx: dict[str, Any]) -> 
         ok = u in have
         return {"ok": ok, "error": None if ok else f"advertised UUID {u} missing"}
     if step.get("properties") and (step.get("uuid") or step.get("handle")):
-        from app.dongle.parser import resolve_handle
-
         char = resolve_handle(station.services, str(step.get("uuid") or step.get("handle")))
         if not char:
             return {"ok": False, "error": "characteristic not found"}

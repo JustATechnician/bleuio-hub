@@ -9,13 +9,6 @@ LOGS_DIR = ROOT / "logs"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
     if raw is None or not raw.strip():

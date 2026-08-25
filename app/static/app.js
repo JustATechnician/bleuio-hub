@@ -13,7 +13,8 @@ const state = {
   macroId: null,
   run: null,
   ws: null,
-  writeMode: "hex",
+  scanDuration: 8,
+  scanFilter: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -69,6 +70,7 @@ async function loadLobby() {
   const data = await api("/api/stations");
   state.mock = data.mock;
   state.stations = data.stations || [];
+  if (data.scan_default_sec != null) state.scanDuration = Number(data.scan_default_sec);
   $("mode-badge").textContent = data.mock ? "Mock stations" : `${state.stations.length} dongle(s)`;
   $("mode-badge").className = "badge" + (data.mock ? " warn" : " ok");
   if (!state.stationId) renderLobby();
@@ -243,8 +245,10 @@ function handleEvent(msg) {
     renderMacros();
   }
   if (t === "macro_paused") {
-    if (state.run) state.run.status = "paused";
-    state.run.pauseMessage = msg.message;
+    if (state.run) {
+      state.run.status = "paused";
+      state.run.pauseMessage = msg.message;
+    }
     renderMacros();
   }
   if (t === "macro_finished") {
@@ -289,7 +293,15 @@ function deviceList() {
   return Object.values(state.devices).sort((a, b) => (a.rssi ?? -999) - (b.rssi ?? -999)).reverse();
 }
 
+function syncScanToolbar() {
+  const durEl = $("scan-dur");
+  const filterEl = $("scan-filter");
+  if (durEl) state.scanDuration = Number(durEl.value) || 0;
+  if (filterEl) state.scanFilter = filterEl.value;
+}
+
 function renderScan() {
+  syncScanToolbar();
   const selected = state.devices[state.selectedAddr];
   const rows = deviceList()
     .map((d) => {
@@ -306,8 +318,8 @@ function renderScan() {
     <div class="toolbar">
       <button id="scan-start" class="primary" type="button">Start scan</button>
       <button id="scan-stop" type="button">Stop</button>
-      <input id="scan-dur" type="number" min="0" value="8" title="Seconds; 0 = until stop" />
-      <input id="scan-filter" placeholder="hex filter (optional)" />
+      <input id="scan-dur" type="number" min="0" value="${state.scanDuration}" title="Seconds; 0 = until stop" />
+      <input id="scan-filter" placeholder="hex filter (optional)" value="${esc(state.scanFilter)}" />
       <span class="muted">${Object.keys(state.devices).length} device(s)</span>
     </div>
     <div class="split">
@@ -409,7 +421,7 @@ function renderGatt() {
               </div>
             </div>
             <div class="row" style="margin-top:8px">
-              <input class="write-val" placeholder="${state.writeMode === "hex" ? "hex bytes" : "ascii"}" />
+              <input class="write-val" placeholder="hex bytes" />
               <label class="muted"><input type="checkbox" class="wr-hex" checked /> hex</label>
               <label class="muted"><input type="checkbox" class="wr-nr" ${flags.write_without_response && !flags.write ? "checked" : ""} /> no response</label>
             </div>
@@ -543,6 +555,13 @@ function collectParams() {
   return out;
 }
 
+document.addEventListener("input", (ev) => {
+  const t = ev.target;
+  if (!(t instanceof HTMLElement)) return;
+  if (t.id === "scan-dur") state.scanDuration = Number(t.value) || 0;
+  if (t.id === "scan-filter") state.scanFilter = t.value;
+});
+
 document.addEventListener("click", async (ev) => {
   const t = ev.target;
   if (!(t instanceof HTMLElement)) return;
@@ -559,9 +578,10 @@ document.addEventListener("click", async (ev) => {
     if (t.id === "btn-release" && state.stationId) await releaseStation(state.stationId);
     if (t.dataset.tab) setTab(t.dataset.tab);
     if (t.id === "scan-start") {
+      syncScanToolbar();
       await api(`/api/stations/${state.stationId}/scan/start`, {
         method: "POST",
-        body: { duration: Number($("scan-dur").value || 0), filter: $("scan-filter").value || "" },
+        body: { duration: state.scanDuration, filter: state.scanFilter },
       });
     }
     if (t.id === "scan-stop") await api(`/api/stations/${state.stationId}/scan/stop`, { method: "POST", body: {} });
@@ -579,9 +599,10 @@ document.addEventListener("click", async (ev) => {
       await api(`/api/stations/${state.stationId}/disconnect`, { method: "POST", body: {} });
     }
     if (t.id === "btn-target" && state.selectedAddr) {
+      syncScanToolbar();
       await api(`/api/stations/${state.stationId}/scantarget`, {
         method: "POST",
-        body: { address: state.selectedAddr, duration: 8 },
+        body: { address: state.selectedAddr, duration: state.scanDuration },
       });
     }
     if (t.dataset.read) {

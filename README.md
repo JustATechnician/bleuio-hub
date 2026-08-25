@@ -98,6 +98,7 @@ Firmware: BleuIO Standard 2.2.1 or later (2.7.x recommended). BleuIO Pro is supp
 | `BLEUIO_PORT` | `8000` | HTTP port |
 | `BLEUIO_MOCK` | unset | `1` force mock; `0` real only; unset = real then mock fallback |
 | `BLEUIO_IDLE_TIMEOUT` | `300` | Seconds until an idle claim is released |
+| `BLEUIO_SCAN_SEC` | `8` | Default scan duration (seconds) in the Scan tab |
 
 ## Macros
 

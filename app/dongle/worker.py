@@ -8,8 +8,9 @@ import queue
 import re
 import threading
 import time
-from typing import Any, Callable
+from typing import Any
 
+from app.config import BLEUIO_PIDS, BLEUIO_VID
 from app.dongle.base import Station
 from app.dongle.parser import (
     ascii_preview,
@@ -69,8 +70,6 @@ class BleuIoStation(Station):
 
     def _open(self) -> None:
         from bleuio_lib.bleuio_funcs import BleuIO
-
-        kwargs: dict[str, Any] = {"port": self.port, "timeout": 0.05}
         try:
             self._dongle = BleuIO(port=self.port, timeout=0.05, exclusive_mode=True, rx_delay=0.01)
         except TypeError:
@@ -176,17 +175,9 @@ class BleuIoStation(Station):
             pass
 
     def _do_shutdown(self) -> None:
-        dongle = self._dongle
-        if not dongle:
+        if not self._dongle:
             return
-        try:
-            dongle.stop_scan()
-        except Exception:
-            pass
-        try:
-            dongle.at_gapdisconnectall()
-        except Exception:
-            pass
+        self._radio_idle()
 
     def _mark_idle(self, *, clear_devices: bool = False, raw: str = "") -> str | None:
         addr = self.connected_addr
@@ -539,7 +530,6 @@ def list_candidate_ports() -> list[str]:
         from serial.tools import list_ports
     except ImportError:
         return []
-    from app.config import BLEUIO_PIDS, BLEUIO_VID
 
     ports = []
     for info in list_ports.comports():
@@ -549,9 +539,9 @@ def list_candidate_ports() -> list[str]:
         if vid == BLEUIO_VID or (pid in BLEUIO_PIDS) or "bleuio" in desc or "smart sensor" in desc:
             ports.append(info.device)
             continue
-        # CDC ACM / usbmodem devices are typical for BleuIO.
+        # Linux/Pi CDC ACM — skip generic Windows COM ports (ambiguous without VID/name above).
         dev = info.device or ""
-        if re.search(r"ttyACM|ttyUSB|usbmodem|COM\d+", dev, re.I):
+        if not re.search(r"COM\d+", dev, re.I) and re.search(r"ttyACM|ttyUSB|usbmodem", dev, re.I):
             ports.append(dev)
     # De-dupe, keep order
     seen = set()
@@ -561,43 +551,3 @@ def list_candidate_ports() -> list[str]:
             seen.add(p)
             out.append(p)
     return out
-
-
-def identify_bleuio_port(port: str) -> dict[str, str] | None:
-    """Open a port briefly and check ATI for BleuIO. Returns info or None."""
-    try:
-        from bleuio_lib.bleuio_funcs import BleuIO
-    except ImportError:
-        return None
-    dongle = None
-    try:
-        try:
-            dongle = BleuIO(port=port, timeout=0.2, exclusive_mode=True)
-        except TypeError:
-            dongle = BleuIO(port=port, timeout=1)
-        info = dongle.ati()
-        text = collect_text(info).lower()
-        if "bleuio" not in text and "smart sensor" not in text and "da146" not in text:
-            return None
-        result = {"port": port, "firmware": "", "hardware": "", "product": "BleuIO", "mac": ""}
-        for item in _as_dict_list(getattr(info, "Rsp", None)):
-            result["firmware"] = str(item.get("fwVer") or result["firmware"])
-            result["hardware"] = str(item.get("hw") or result["hardware"])
-            result["product"] = str(item.get("name") or result["product"])
-        try:
-            mac = dongle.at_get_mac()
-            for item in _as_dict_list(getattr(mac, "Rsp", None)):
-                if item.get("own_mac_addr"):
-                    result["mac"] = str(item["own_mac_addr"])
-        except Exception:
-            pass
-        return result
-    except Exception as exc:
-        log.debug("port %s is not BleuIO: %s", port, exc)
-        return None
-    finally:
-        try:
-            if dongle and hasattr(dongle, "stop"):
-                dongle.stop()
-        except Exception:
-            pass

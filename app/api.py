@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from app.config import CLAIM_COOKIE
+from app.config import CLAIM_COOKIE, SCAN_DEFAULT_SEC
 from app.dongle.manager import DongleManager
 from app.macros.engine import (
     MacroEngine,
@@ -77,7 +78,12 @@ def _json(request: Request, payload: Any, status: int = 200) -> JSONResponse:
 
 @router.get("/api/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, "mock": hub.manager.mock, "stations": len(hub.manager.stations)}
+    return {
+        "ok": True,
+        "mock": hub.manager.mock,
+        "stations": len(hub.manager.stations),
+        "scan_default_sec": SCAN_DEFAULT_SEC,
+    }
 
 
 @router.get("/api/stations")
@@ -87,6 +93,7 @@ async def stations(request: Request) -> JSONResponse:
         "mock": hub.manager.mock,
         "session_id": session.id,
         "claimed": session.station_id,
+        "scan_default_sec": SCAN_DEFAULT_SEC,
         "stations": [hub.station_public(s, session) for s in hub.manager.all()],
     }
     return hub.attach_cookie(JSONResponse(payload), session, created)
@@ -364,14 +371,8 @@ async def run_log(run_id: str) -> PlainTextResponse:
         records = load_run_log(run_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Unknown run log")
-    text = "\n".join(json_line(r) for r in records) + "\n"
+    text = "\n".join(json.dumps(r, default=str) for r in records) + "\n"
     return PlainTextResponse(text, media_type="application/jsonl")
-
-
-def json_line(obj: Any) -> str:
-    import json
-
-    return json.dumps(obj, default=str)
 
 
 @router.websocket("/api/stations/{station_id}/ws")

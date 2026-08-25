@@ -4,7 +4,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from app.config import CLAIM_COOKIE, IDLE_TIMEOUT_SEC
+from app.config import IDLE_TIMEOUT_SEC
 
 
 @dataclass
@@ -91,6 +91,3 @@ class SessionStore:
             "mine": bool(viewer and viewer.id == owner),
             "idle_sec": int(idle),
         }
-
-
-COOKIE_NAME = CLAIM_COOKIE
