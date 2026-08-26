@@ -291,9 +291,11 @@ function handleEvent(msg) {
     loadLobby();
   }
   if (t === "station" && msg.station && msg.station.id === state.stationId) {
+    applyStationSnapshot(msg.station);
     $("station-meta").textContent = `${msg.station.port} · ${msg.station.mac || "no MAC"} · ${
       msg.station.scanning ? "scanning" : msg.station.connected ? "connected" : "idle"
     }`;
+    if (state.tab === "gatt") renderGatt();
   }
   if (t === "error") toast(msg.message || "Error", "err");
 }
@@ -317,24 +319,36 @@ function renderAll() {
 
 function deviceList() {
   const prefs = stationPrefs(state.stationId);
-  const macNeedle = (prefs.scanFilter || "").replace(/[\s:-]/g, "").toUpperCase();
-  const isMacFilter = macNeedle.length >= 4 && /^[0-9A-F]+$/.test(macNeedle) && !macNeedle.startsWith("0X");
+  const needle = (prefs.scanFilter || "").replace(/[\s:\[\]-]/g, "").toUpperCase();
   return Object.values(state.devices)
     .filter((d) => {
-      if (!isMacFilter) return true;
-      const addr = String(d.addr || "").replace(/[\[\]:]/g, "").toUpperCase();
-      return addr.includes(macNeedle);
+      if (!needle) return true;
+      const addr = String(d.addr || "").replace(/[\s:\[\]-]/g, "").toUpperCase();
+      return addr.includes(needle);
     })
     .sort((a, b) => (a.rssi ?? -999) - (b.rssi ?? -999))
     .reverse();
 }
 
 function dongleScanFilter() {
-  const prefs = stationPrefs(state.stationId);
-  const raw = (prefs.scanFilter || "").trim();
-  const compact = raw.replace(/[\s:-]/g, "").toUpperCase();
-  const looksMac = compact.length >= 4 && /^[0-9A-F]+$/.test(compact) && !compact.startsWith("0X");
-  return looksMac ? "" : raw.replace(/\s+/g, "");
+  const raw = (stationPrefs(state.stationId).scanFilter || "").trim();
+  if (raw.toLowerCase().startsWith("hex:")) {
+    return raw.slice(4).replace(/\s+/g, "");
+  }
+  return "";
+}
+
+function applyStationSnapshot(station) {
+  if (!station) return;
+  state.connectedAddr = station.connected ? station.connected_addr : null;
+  state.services = station.services || [];
+  if (!station.connected) state.notifies.clear();
+}
+
+function applyConnectResult(res) {
+  if (res?.address) state.connectedAddr = res.address;
+  if (Array.isArray(res?.services)) state.services = res.services;
+  renderAll();
 }
 
 function syncScanToolbar() {
@@ -367,7 +381,7 @@ function renderScan() {
       <button id="scan-start" class="primary" type="button">Start scan</button>
       <button id="scan-stop" type="button">Stop</button>
       <input id="scan-dur" type="number" min="0" value="${prefs.scanDuration}" title="Seconds; 0 = until stop" />
-      <input id="scan-filter" placeholder="MAC or hex filter" value="${esc(prefs.scanFilter)}" title="MAC substring filters the list; hex is sent to the dongle (AT+FINDSCANDATA)" />
+      <input id="scan-filter" placeholder="MAC filter (hex: for AD data)" value="${esc(prefs.scanFilter)}" title="Filters the device list by address substring. Prefix hex: to filter advertisement bytes on the dongle." />
       <span class="muted">${Object.keys(state.devices).length} device(s)</span>
     </div>
     <div class="split">
@@ -637,7 +651,11 @@ document.addEventListener("click", async (ev) => {
         body: { duration: prefs.scanDuration, filter: dongleScanFilter() },
       });
     }
-    if (t.id === "scan-stop") await api(`/api/stations/${state.stationId}/scan/stop`, { method: "POST", body: {} });
+    if (t.id === "scan-stop") {
+      await api(`/api/stations/${state.stationId}/scan/stop`, { method: "POST", body: {} });
+      toast("Scan stopped");
+      renderScan();
+    }
     const addrRow = t.closest("[data-addr]");
     if (addrRow) {
       state.selectedAddr = addrRow.getAttribute("data-addr");
@@ -646,11 +664,19 @@ document.addEventListener("click", async (ev) => {
       return;
     }
     if (t.id === "btn-conn" && state.selectedAddr) {
-      await api(`/api/stations/${state.stationId}/connect`, { method: "POST", body: { address: state.selectedAddr } });
+      const res = await api(`/api/stations/${state.stationId}/connect`, {
+        method: "POST",
+        body: { address: state.selectedAddr },
+      });
+      applyConnectResult(res);
       setTab("gatt");
     }
     if (t.id === "btn-disc" || t.id === "btn-disc-2") {
       await api(`/api/stations/${state.stationId}/disconnect`, { method: "POST", body: {} });
+      state.connectedAddr = null;
+      state.services = [];
+      state.notifies.clear();
+      renderAll();
     }
     if (t.id === "btn-target" && state.selectedAddr) {
       syncScanToolbar();

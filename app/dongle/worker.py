@@ -15,10 +15,13 @@ from app.dongle.base import Station
 from app.dongle.parser import (
     ascii_preview,
     collect_text,
+    gatt_json_to_line,
     hex_to_bytes,
     parse_gatt_browse,
+    parse_gatt_response,
     parse_read_payload,
     parse_scan_payload,
+    public_services,
     resolve_handle,
 )
 
@@ -62,6 +65,9 @@ class BleuIoStation(Station):
         self._thread: threading.Thread | None = None
         self._running = False
         self._scan_buffer: list[str] = []
+        self._gatt_lines: list[str] = []
+        self._gatt_ready = threading.Event()
+        self._auto_stop_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         loop = asyncio.get_running_loop()
@@ -210,6 +216,35 @@ class BleuIoStation(Station):
             errors.append(f"gapdisconnect: {exc}")
         return errors
 
+    def _ingest_gatt_fragment(self, text: str) -> None:
+        for raw_line in text.replace("\r", "\n").split("\n"):
+            line = raw_line.strip()
+            if not line or "handle_evt" in line.lower():
+                continue
+            if line.startswith("{"):
+                try:
+                    obj = json.loads(line)
+                    if isinstance(obj, dict):
+                        converted = gatt_json_to_line(obj)
+                        if converted:
+                            line = converted
+                        else:
+                            continue
+                except json.JSONDecodeError:
+                    continue
+            if re.search(r"\b(serv|char|desc|----)\b", line, re.I):
+                if line not in self._gatt_lines:
+                    self._gatt_lines.append(line)
+
+    def _finalize_gatt(self, *, emit: bool = True) -> list[dict[str, Any]]:
+        services = parse_gatt_browse("\n".join(self._gatt_lines))
+        if services:
+            self.services = services
+            if emit:
+                self.emit("gatt", services=public_services(self.services))
+        self._gatt_ready.set()
+        return services
+
     def _do_reset_idle(self) -> dict[str, Any]:
         errors = self._radio_idle()
         self._mark_idle(clear_devices=True)
@@ -238,9 +273,22 @@ class BleuIoStation(Station):
             self.emit("passkey", needed=True, raw=text)
         if "disconnected" in lower or "gap_disconnected" in lower:
             self._mark_idle(raw=text)
-        elif self.connected_addr and "connected" in lower:
+        elif self.connected_addr and "connected" in lower and "disconnected" not in lower:
             self.connected = True
             self.emit("connection", connected=True, address=self.connected_addr, raw=text)
+        if "gattc_browse_completed" in lower:
+            status_ok = bool(re.search(r"status\s*=\s*0\b", text, re.I)) or '"status":0' in text.replace(" ", "")
+            if status_ok:
+                self._finalize_gatt()
+            else:
+                log.warning("GATT browse failed on %s: %s", self.id, text[:200])
+                self._gatt_ready.set()
+        elif " serv " in f" {text} " or " char " in f" {text} " or " ---- " in f" {text} " or " desc " in f" {text} ":
+            self._ingest_gatt_fragment(text)
+            partial = parse_gatt_browse("\n".join(self._gatt_lines))
+            if partial:
+                self.services = partial
+                self.emit("gatt", services=public_services(self.services))
         if "noti" in lower or "indication" in lower or "handle_evt_gattc_notification" in lower:
             handle = None
             hex_val = ""
@@ -266,12 +314,7 @@ class BleuIoStation(Station):
                 ascii=ascii_preview(hex_to_bytes(hex_val)),
                 raw=text,
             )
-        # GATT browse fragments sometimes arrive as events
-        if " serv " in f" {text} " or " char " in f" {text} ":
-            extra = parse_gatt_browse(text)
-            if extra:
-                self.services = extra
-                self.emit("gatt", services=self.services)
+        # GATT browse fragments sometimes arrive as events (handled above)
 
     def _do_start_scan(self, duration: int, filter_hex: str) -> None:
         dongle = self._dongle
@@ -311,28 +354,37 @@ class BleuIoStation(Station):
             pass
         self.scanning = False
         self.connected_addr = address
+        self._gatt_lines = []
+        self._gatt_ready.clear()
         resp = self._dongle.at_gapconnect(address)
-        # Allow discovery to finish
-        time.sleep(1.2)
-        services = []
+        time.sleep(0.5)
         try:
             browse = self._dongle.at_get_services()
-            time.sleep(0.8)
-            services = parse_gatt_browse(collect_text(browse))
-            if not services:
-                services = parse_gatt_browse(str(getattr(browse, "Rsp", "")))
         except Exception as exc:
             log.warning("GETSERVICES: %s", exc)
+            browse = None
+        if not self._gatt_ready.wait(timeout=20):
+            log.warning("GATT browse timed out on %s (%d lines buffered)", self.id, len(self._gatt_lines))
+        services = parse_gatt_browse("\n".join(self._gatt_lines))
+        if not services and browse is not None:
+            services = parse_gatt_response(browse)
+        if services:
+            self.services = services
         self.connected = True
-        self.services = services
+        pub = public_services(self.services)
         self.emit("connection", connected=True, address=address, raw=collect_text(resp))
-        self.emit("gatt", services=services)
+        self.emit("gatt", services=pub)
         self.emit("station", station=self.snapshot())
-        return {"ok": True, "address": address, "services": services}
+        return {"ok": True, "address": address, "services": pub}
 
     def _do_disconnect(self) -> dict[str, Any]:
-        resp = None
         err = None
+        resp = None
+        try:
+            self._dongle.stop_scan()
+        except Exception as exc:
+            log.debug("stop_scan on disconnect: %s", exc)
+        self.scanning = False
         try:
             resp = self._dongle.at_gapdisconnect()
         except Exception as exc:
@@ -343,7 +395,16 @@ class BleuIoStation(Station):
                     err = None
             except Exception as exc2:
                 err = str(exc2)
-        self._mark_idle(raw=collect_text(resp) if resp is not None else err or "")
+        addr = self.connected_addr
+        self.connected = False
+        self.connected_addr = None
+        self.services = []
+        self._gatt_lines = []
+        self._gatt_ready.clear()
+        raw = collect_text(resp) if resp is not None else (err or "")
+        self.emit("connection", connected=False, address=addr, raw=raw)
+        self.emit("gatt", services=[])
+        self.emit("station", station=self.snapshot())
         return {"ok": not err, "error": err}
 
     def _handle(self, handle_or_uuid: str) -> str:
@@ -471,25 +532,36 @@ class BleuIoStation(Station):
         return {"ok": True, "raw": collect_text(resp)}
 
     async def _auto_stop(self, duration: int) -> None:
-        await asyncio.sleep(max(duration, 1))
-        if self.scanning:
-            try:
+        try:
+            await asyncio.sleep(max(duration, 1))
+            if self.scanning:
                 await self.stop_scan()
-            except Exception:
-                pass
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._auto_stop_task = None
 
     async def start_scan(self, duration: int = 0, filter_hex: str = "") -> None:
+        if self._auto_stop_task:
+            self._auto_stop_task.cancel()
+            self._auto_stop_task = None
         await self._call("start_scan", duration, filter_hex)
         if duration:
-            asyncio.create_task(self._auto_stop(duration))
+            self._auto_stop_task = asyncio.create_task(self._auto_stop(duration))
 
     async def stop_scan(self) -> None:
+        if self._auto_stop_task:
+            self._auto_stop_task.cancel()
+            self._auto_stop_task = None
         await self._call("stop_scan")
 
     async def scantarget(self, address: str, duration: int = 0) -> None:
+        if self._auto_stop_task:
+            self._auto_stop_task.cancel()
+            self._auto_stop_task = None
         await self._call("scantarget", address, duration)
         if duration:
-            asyncio.create_task(self._auto_stop(duration))
+            self._auto_stop_task = asyncio.create_task(self._auto_stop(duration))
 
     async def connect(self, address: str) -> dict[str, Any]:
         return await self._call("connect", address)

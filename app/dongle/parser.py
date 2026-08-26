@@ -351,8 +351,19 @@ def parse_gatt_browse(text: str | list[Any]) -> list[dict[str, Any]]:
         line = raw_line.strip()
         if not line or line.upper() in {"OK", "SCANNING..."}:
             continue
-        if "handle_evt" in line.lower() or line.startswith("{") or line.startswith("AT+"):
+        if "handle_evt" in line.lower() or line.startswith("AT+"):
             continue
+        if line.startswith("{"):
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    converted = gatt_json_to_line(obj)
+                    if converted:
+                        line = converted
+                    else:
+                        continue
+            except json.JSONDecodeError:
+                continue
         m = _SERV_RE.match(line)
         if m:
             uuid = m.group("uuid").replace("0x", "")
@@ -403,6 +414,58 @@ def parse_gatt_browse(text: str | list[Any]) -> list[dict[str, Any]]:
             if not char.get("handle"):
                 char["handle"] = char.get("decl_handle")
     return services
+
+
+def gatt_json_to_line(obj: dict[str, Any]) -> str | None:
+    """Convert BleuIO verbose JSON GATT entries to text browse lines."""
+    handle = str(obj.get("handle") or obj.get("hdl") or "").strip().lower().replace("0x", "")
+    if not re.fullmatch(r"[0-9a-f]{4}", handle):
+        return None
+    uuid = str(obj.get("uuid") or obj.get("value_uuid") or obj.get("value") or "").strip()
+    uuid = uuid.replace("0x", "").lower()
+    kind = str(obj.get("type") or obj.get("kind") or "").strip().lower()
+    if kind in {"service", "serv", "primary", "secondary", "svc"}:
+        return f"{handle} serv {uuid}"
+    if kind in {"characteristic", "char"} or obj.get("prop") is not None or obj.get("propFormat"):
+        prop = obj.get("prop")
+        suffix = ""
+        if prop is not None:
+            suffix = f" prop={prop}"
+            mask = obj.get("propFormat") or obj.get("prop_format")
+            if mask:
+                suffix += f" ({mask})"
+        return f"{handle} char {uuid}{suffix}"
+    if kind in {"value", "val", "char_value"} or obj.get("value_uuid"):
+        vu = str(obj.get("value_uuid") or uuid).replace("0x", "").lower()
+        return f"{handle} ---- {vu}"
+    if kind in {"descriptor", "desc"}:
+        return f"{handle} desc {uuid}"
+    return None
+
+
+def parse_gatt_response(resp: Any) -> list[dict[str, Any]]:
+    """Parse GATT tree from BleuIO GETSERVICES response and/or accumulated browse text."""
+    services = parse_gatt_browse(collect_text(resp))
+    if services:
+        return services
+    lines: list[str] = []
+    rsp = getattr(resp, "Rsp", None) if resp is not None else None
+    if isinstance(resp, dict):
+        rsp = resp.get("Rsp", rsp)
+    if isinstance(rsp, dict):
+        rsp = [rsp]
+    if isinstance(rsp, (list, tuple)):
+        for item in rsp:
+            if isinstance(item, dict):
+                line = gatt_json_to_line(item)
+                if line:
+                    lines.append(line)
+            elif isinstance(item, str):
+                for part in item.replace("\r", "\n").split("\n"):
+                    part = part.strip()
+                    if part and "handle_evt" not in part.lower():
+                        lines.append(part)
+    return parse_gatt_browse("\n".join(lines))
 
 
 def public_services(services: list[dict[str, Any]]) -> list[dict[str, Any]]:

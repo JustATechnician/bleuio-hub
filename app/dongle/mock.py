@@ -270,6 +270,7 @@ class MockStation(Station):
                 self._notify_task.cancel()
                 self._notify_task = None
             self.emit("connection", connected=False, address=addr)
+            self.emit("gatt", services=[])
             self.emit("station", station=self.snapshot())
             return {"ok": True}
 
