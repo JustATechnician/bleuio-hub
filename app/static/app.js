@@ -13,7 +13,7 @@ const state = {
   macroId: null,
   run: null,
   ws: null,
-  scanDefaultSec: 8,
+  scanDefaultSec: 30,
   stationPrefs: {},
 };
 
@@ -356,7 +356,7 @@ function syncScanToolbar() {
   const prefs = stationPrefs(state.stationId);
   const durEl = $("scan-dur");
   const filterEl = $("scan-filter");
-  if (durEl) prefs.scanDuration = Number(durEl.value) || 0;
+  if (durEl) prefs.scanDuration = Number(durEl.value) || state.scanDefaultSec;
   if (filterEl) prefs.scanFilter = filterEl.value;
 }
 
@@ -380,7 +380,7 @@ function renderScan() {
     <div class="toolbar">
       <button id="scan-start" class="primary" type="button">Start scan</button>
       <button id="scan-stop" type="button">Stop</button>
-      <input id="scan-dur" type="number" min="0" value="${prefs.scanDuration}" title="Seconds; 0 = until stop" />
+      <input id="scan-dur" type="number" min="1" value="${prefs.scanDuration}" title="Scan duration in seconds (default ${state.scanDefaultSec})" />
       <input id="scan-filter" placeholder="MAC filter (hex: for AD data)" value="${esc(prefs.scanFilter)}" title="Filters the device list by address substring. Prefix hex: to filter advertisement bytes on the dongle." />
       <span class="muted">${Object.keys(state.devices).length} device(s)</span>
     </div>
@@ -621,7 +621,7 @@ document.addEventListener("input", (ev) => {
   const t = ev.target;
   if (!(t instanceof HTMLElement) || !state.stationId) return;
   const prefs = stationPrefs(state.stationId);
-  if (t.id === "scan-dur") prefs.scanDuration = Number(t.value) || 0;
+  if (t.id === "scan-dur") prefs.scanDuration = Number(t.value) || state.scanDefaultSec;
   if (t.id === "scan-filter") {
     prefs.scanFilter = t.value;
     if (state.tab === "scan") renderScan();

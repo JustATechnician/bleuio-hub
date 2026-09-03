@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BleuIO Hub — Station (design)</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <span class="mark"></span>
+        <div>
+          <h1>BleuIO Hub</h1>
+          <p>Claim a dongle to scan, inspect advertisements, and test GATT.</p>
+        </div>
+      </div>
+      <div class="top-meta">
+        <span class="badge ok">4 dongle(s)</span>
+        <button class="ghost" type="button">Rescan dongles</button>
+        <a class="btn ghost" href="index.html">Lobby</a>
+      </div>
+    </header>
+
+    <main>
+      <p class="design-note">
+        Static mockup with CSS-only tab switching. Back to <a href="index.html" class="mono">lobby</a>.
+      </p>
+
+      <div class="station-bar">
+        <div>
+          <h2>dongle-2</h2>
+          <p class="muted">COM7 · 11:22:33:44:55:66 · 2.7.1 · connected</p>
+        </div>
+        <div class="row">
+          <button class="danger" type="button">Release</button>
+        </div>
+      </div>
+
+      <input type="radio" name="tab" id="tab-scan-radio" checked hidden />
+      <input type="radio" name="tab" id="tab-gatt-radio" hidden />
+      <input type="radio" name="tab" id="tab-macros-radio" hidden />
+      <input type="radio" name="tab" id="tab-log-radio" hidden />
+
+      <nav class="tab-nav">
+        <label for="tab-scan-radio">Scan</label>
+        <label for="tab-gatt-radio">GATT</label>
+        <label for="tab-macros-radio">Macros</label>
+        <label for="tab-log-radio">Log</label>
+      </nav>
+
+      <div class="tab-panels">
+        <!-- SCAN -->
+        <div id="panel-scan" class="tab-panel">
+          <div class="toolbar">
+            <button class="primary" type="button">Start scan</button>
+            <button type="button">Stop</button>
+            <input type="number" min="0" value="10" title="Seconds; 0 = until stop" />
+            <input placeholder="MAC filter (hex: for AD data)" value="00" />
+            <span class="muted">12 device(s)</span>
+          </div>
+          <div class="split">
+            <div class="drawer" style="overflow: auto; max-height: 560px">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Address</th>
+                    <th>Name</th>
+                    <th>RSSI</th>
+                    <th>Adv UUIDs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="clickable selected">
+                    <td class="mono">[1]D1:79:29:DB:CB:CC</td>
+                    <td>DemoSensor</td>
+                    <td>−62 dBm</td>
+                    <td><span class="chip">180f</span> <span class="chip">180a</span></td>
+                  </tr>
+                  <tr class="clickable">
+                    <td class="mono">[0]C1:12:32:45:65:54</td>
+                    <td>HibouAIR</td>
+                    <td>−71 dBm</td>
+                    <td><span class="chip">1812</span></td>
+                  </tr>
+                  <tr class="clickable">
+                    <td class="mono">[1]AA:00:BB:11:22:33</td>
+                    <td>—</td>
+                    <td>−78 dBm</td>
+                    <td>—</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="drawer">
+              <div class="row space">
+                <div>
+                  <h3 style="margin: 0">DemoSensor</h3>
+                  <div class="mono muted">[1]D1:79:29:DB:CB:CC</div>
+                </div>
+                <button class="primary" type="button">Connect</button>
+              </div>
+              <p class="muted">RSSI −62 dBm</p>
+              <div class="field">
+                <b>ADV hex</b>
+                <div class="hex">0201060a0944656d6f53656e736f72</div>
+              </div>
+              <div class="field">
+                <b>Flags</b>
+                <div>0x6 {"LE General Discoverable Mode","BR/EDR Not Supported"}</div>
+                <div class="hex">020106</div>
+              </div>
+              <div class="field">
+                <b>Complete Local Name</b>
+                <div>DemoSensor</div>
+                <div class="hex">090944656d6f53656e736f72</div>
+              </div>
+              <div class="row">
+                <button type="button">Watch this advertiser</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- GATT -->
+        <div id="panel-gatt" class="tab-panel">
+          <div class="toolbar">
+            <strong class="mono">[1]D1:79:29:DB:CB:CC</strong>
+            <button class="danger" type="button">Disconnect</button>
+          </div>
+          <p class="muted">Advertised UUIDs match the discovered GATT tree (16-bit).</p>
+
+          <div class="svc">
+            <div class="svc-h">
+              <div>Generic Access <span class="mono muted">1800</span></div>
+              <div class="muted">3 char(s)</div>
+            </div>
+            <div class="char">
+              <div class="row space">
+                <div>
+                  <div class="name">Device Name <span class="mono muted">2a00</span></div>
+                  <div class="muted">handle 0003 · <span class="props">-R-W----</span></div>
+                </div>
+                <div class="row">
+                  <button type="button">Read</button>
+                  <button type="button">Write</button>
+                  <button disabled type="button">Notify</button>
+                  <button disabled type="button">Indicate</button>
+                </div>
+              </div>
+              <div class="row" style="margin-top: 8px">
+                <input class="write-val" placeholder="hex bytes" />
+                <label class="muted"><input type="checkbox" checked /> hex</label>
+                <label class="muted"><input type="checkbox" /> no response</label>
+              </div>
+              <div class="hex result">48522d48696464656e  "HR-Hidden"</div>
+            </div>
+            <div class="char">
+              <div class="row space">
+                <div>
+                  <div class="name">Battery Level <span class="mono muted">2a19</span></div>
+                  <div class="muted">handle 0012 · <span class="props">-R-N----</span></div>
+                </div>
+                <div class="row">
+                  <button type="button">Read</button>
+                  <button disabled type="button">Write</button>
+                  <button type="button">Notify</button>
+                  <button disabled type="button">Indicate</button>
+                </div>
+              </div>
+              <div class="row" style="margin-top: 8px">
+                <input placeholder="hex bytes" />
+                <label class="muted"><input type="checkbox" checked /> hex</label>
+                <label class="muted"><input type="checkbox" /> no response</label>
+              </div>
+              <div class="hex result"></div>
+            </div>
+          </div>
+
+          <div class="svc">
+            <div class="svc-h">
+              <div>Nordic UART <span class="mono muted">6e400001-…</span></div>
+              <div class="muted">2 char(s)</div>
+            </div>
+            <div class="char">
+              <div class="row space">
+                <div>
+                  <div class="name">Nordic UART TX <span class="mono muted">6e400002-…</span></div>
+                  <div class="muted">handle 0010 · <span class="props">--XW----</span></div>
+                </div>
+                <div class="row">
+                  <button disabled type="button">Read</button>
+                  <button type="button">Write</button>
+                  <button disabled type="button">Notify</button>
+                  <button disabled type="button">Indicate</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- MACROS -->
+        <div id="panel-macros" class="tab-panel">
+          <div class="macro-list">
+            <div>
+              <div class="macro-item active">
+                <strong>Probe permissions</strong>
+                <span class="chip">built-in</span>
+                <div class="muted">Try read/write on every characteristic.</div>
+              </div>
+              <div class="macro-item">
+                <strong>Read all characteristics</strong>
+                <span class="chip">built-in</span>
+              </div>
+              <div class="macro-item">
+                <strong>sensor-roundtrip</strong>
+                <span class="chip">custom</span>
+              </div>
+              <button type="button">New custom…</button>
+            </div>
+            <div>
+              <div class="toolbar">
+                <button class="primary" type="button">Run</button>
+                <button class="danger" type="button">Cancel</button>
+                <a class="btn" href="#">Download log</a>
+              </div>
+              <p class="muted">Connect, notify, write, wait, pause, read.</p>
+              <div class="row">
+                <label class="muted">address<br /><input value="[1]D1:79:29:DB:CB:CC" /></label>
+                <label class="muted">test_hex<br /><input value="01" /></label>
+              </div>
+              <h3>Steps</h3>
+              <div class="step ok"><span class="mono">0</span> connect</div>
+              <div class="step ok"><span class="mono">1</span> notify_on</div>
+              <div class="step run"><span class="mono">2</span> write</div>
+              <div class="step"><span class="mono">3</span> wait_notify</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- LOG -->
+        <div id="panel-log" class="tab-panel">
+          <div class="toolbar">
+            <button type="button">Clear</button>
+          </div>
+          <div class="logbox">[10:15:02] Connected [1]D1:79:29:DB:CB:CC
+[10:15:04] READ 0003 48522d48696464656e "HR-Hidden"
+[10:15:12] NOTIFY 0012 64 "d"
+[10:15:18] Scan complete</div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Passkey modal (shown in mockup; add class "hidden" to hide) -->
+    <div class="modal hidden" id="passkey-modal">
+      <div class="dialog">
+        <h3>Passkey required</h3>
+        <p class="muted">Enter the 6-digit BLE passkey.</p>
+        <input maxlength="6" placeholder="123456" />
+        <div class="row" style="margin-top: 12px">
+          <button class="primary" type="button">Send</button>
+          <button type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

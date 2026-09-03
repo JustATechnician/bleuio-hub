@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BleuIO Hub — Lobby (design)</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <span class="mark"></span>
+        <div>
+          <h1>BleuIO Hub</h1>
+          <p>Claim a dongle to scan, inspect advertisements, and test GATT.</p>
+        </div>
+      </div>
+      <div class="top-meta">
+        <span class="badge ok">4 dongle(s)</span>
+        <button class="ghost" type="button">Rescan dongles</button>
+      </div>
+    </header>
+
+    <main>
+      <p class="design-note">
+        Static layout mockup — no API calls. Open <a href="station.html" class="mono">station.html</a> for the workstation view.
+      </p>
+
+      <div class="grid">
+        <article class="card">
+          <div class="row space">
+            <h3>dongle-1</h3>
+            <span class="badge">Available</span>
+          </div>
+          <div class="kv">
+            <div>Port <span class="mono">COM5</span></div>
+            <div>MAC <span class="mono">AA:BB:CC:DD:EE:FF</span></div>
+            <div>BleuIO · 2.7.1 · DA14585</div>
+            <div>Idle</div>
+          </div>
+          <div class="row" style="margin-top: 12px">
+            <a class="btn primary" href="station.html">Claim</a>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="row space">
+            <h3>dongle-2</h3>
+            <span class="badge ok">Yours</span>
+          </div>
+          <div class="kv">
+            <div>Port <span class="mono">COM7</span></div>
+            <div>MAC <span class="mono">11:22:33:44:55:66</span></div>
+            <div>BleuIO · 2.7.1 · DA14585</div>
+            <div>Connected <span class="mono">[1]D1:79:29:DB:CB:CC</span></div>
+          </div>
+          <div class="row" style="margin-top: 12px">
+            <a class="btn primary" href="station.html">Open</a>
+            <button class="danger" type="button">Release</button>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="row space">
+            <h3>dongle-3</h3>
+            <span class="badge busy">In use</span>
+          </div>
+          <div class="kv">
+            <div>Port <span class="mono">COM9</span></div>
+            <div>MAC <span class="mono">FE:DC:BA:98:76:54</span></div>
+            <div>BleuIO · 2.7.0 · DA14585</div>
+            <div>Idle · scanning</div>
+          </div>
+          <div class="row" style="margin-top: 12px">
+            <button disabled type="button">Busy</button>
+          </div>
+        </article>
+      </div>
+    </main>
+  </body>
+</html>

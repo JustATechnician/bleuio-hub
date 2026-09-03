@@ -23,7 +23,7 @@ PORT = _env_int("BLEUIO_PORT", 8000)
 MOCK_ENV = os.getenv("BLEUIO_MOCK")
 IDLE_TIMEOUT_SEC = _env_int("BLEUIO_IDLE_TIMEOUT", 300)
 CLAIM_COOKIE = "bleuio_session"
-SCAN_DEFAULT_SEC = _env_int("BLEUIO_SCAN_SEC", 8)
+SCAN_DEFAULT_SEC = _env_int("BLEUIO_SCAN_SEC", 30)
 MACRO_STEP_TIMEOUT_SEC = _env_int("BLEUIO_MACRO_STEP_TIMEOUT", 30)
 
 # Smart Sensor Devices BleuIO USB IDs (application firmware).

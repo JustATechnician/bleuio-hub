@@ -174,6 +174,8 @@ async def scan_start(station_id: str, request: Request) -> JSONResponse:
     session, station = _owner_station(request, station_id)
     body = await _body(request)
     duration = int(body.get("duration") or 0)
+    if duration <= 0:
+        duration = SCAN_DEFAULT_SEC
     filt = str(body.get("filter") or "")
     await station.start_scan(duration=duration, filter_hex=filt)
     return _json(request, {"ok": True, "scanning": True})

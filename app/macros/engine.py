@@ -597,7 +597,8 @@ class MacroEngine:
             loop = asyncio.get_running_loop()
             deadline = time.time() + timeout
             if not station.scanning:
-                await station.start_scan(duration=0, filter_hex=contains)
+                scan_sec = max(int(timeout) + 2, 30)
+                await station.start_scan(duration=scan_sec, filter_hex=contains)
             while time.time() < deadline:
                 fut = loop.create_future()
                 adv_waiters.append(fut)

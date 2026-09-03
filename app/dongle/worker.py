@@ -10,7 +10,7 @@ import threading
 import time
 from typing import Any
 
-from app.config import BLEUIO_PIDS, BLEUIO_VID
+from app.config import BLEUIO_PIDS, BLEUIO_VID, SCAN_DEFAULT_SEC
 from app.dongle.base import Station
 from app.dongle.parser import (
     ascii_preview,
@@ -67,7 +67,6 @@ class BleuIoStation(Station):
         self._scan_buffer: list[str] = []
         self._gatt_lines: list[str] = []
         self._gatt_ready = threading.Event()
-        self._auto_stop_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         loop = asyncio.get_running_loop()
@@ -271,6 +270,8 @@ class BleuIoStation(Station):
         lower = text.lower()
         if "passkey" in lower:
             self.emit("passkey", needed=True, raw=text)
+        if '"action":"scan completed"' in lower or "scan completed" in lower:
+            self._finish_scan()
         if "disconnected" in lower or "gap_disconnected" in lower:
             self._mark_idle(raw=text)
         elif self.connected_addr and "connected" in lower and "disconnected" not in lower:
@@ -316,6 +317,29 @@ class BleuIoStation(Station):
             )
         # GATT browse fragments sometimes arrive as events (handled above)
 
+    def _finish_scan(self) -> None:
+        if not self.scanning:
+            return
+        dongle = self._dongle
+        if dongle is not None:
+            try:
+                dongle.__saveScanRsp = False
+            except Exception:
+                pass
+        self.scanning = False
+        self.emit("scan_complete")
+        self.emit("station", station=self.snapshot())
+
+    def _send_timed_findscandata(self, filter_hex: str, duration: int) -> None:
+        """Start AT+FINDSCANDATA with firmware =seconds (non-blocking on worker thread)."""
+        dongle = self._dongle
+        scandata = (filter_hex or "").upper()
+        sec = max(1, int(duration))
+        dongle.rx_scanning_results = []
+        dongle.__saveScanRsp = True
+        cmd = f"AT+FINDSCANDATA={scandata}={sec}"
+        dongle._serial.write((cmd + "\r").encode())
+
     def _do_start_scan(self, duration: int, filter_hex: str) -> None:
         dongle = self._dongle
         if self.connected:
@@ -326,16 +350,13 @@ class BleuIoStation(Station):
             pass
         self.scanning = True
         self.emit("station", station=self.snapshot())
-        # Pass 0 so the library returns after starting; we stop from another command.
-        dongle.at_findscandata(filter_hex or "", timeout=0)
+        self._send_timed_findscandata(filter_hex, duration)
 
     def _do_stop_scan(self) -> None:
         try:
             self._dongle.stop_scan()
         finally:
-            self.scanning = False
-            self.emit("scan_complete")
-            self.emit("station", station=self.snapshot())
+            self._finish_scan()
 
     def _do_scantarget(self, address: str, duration: int) -> None:
         if self.connected:
@@ -531,37 +552,16 @@ class BleuIoStation(Station):
         resp = self._dongle.at_enter_passkey(passkey)
         return {"ok": True, "raw": collect_text(resp)}
 
-    async def _auto_stop(self, duration: int) -> None:
-        try:
-            await asyncio.sleep(max(duration, 1))
-            if self.scanning:
-                await self.stop_scan()
-        except asyncio.CancelledError:
-            pass
-        finally:
-            self._auto_stop_task = None
-
     async def start_scan(self, duration: int = 0, filter_hex: str = "") -> None:
-        if self._auto_stop_task:
-            self._auto_stop_task.cancel()
-            self._auto_stop_task = None
+        if duration <= 0:
+            duration = SCAN_DEFAULT_SEC
         await self._call("start_scan", duration, filter_hex)
-        if duration:
-            self._auto_stop_task = asyncio.create_task(self._auto_stop(duration))
 
     async def stop_scan(self) -> None:
-        if self._auto_stop_task:
-            self._auto_stop_task.cancel()
-            self._auto_stop_task = None
         await self._call("stop_scan")
 
     async def scantarget(self, address: str, duration: int = 0) -> None:
-        if self._auto_stop_task:
-            self._auto_stop_task.cancel()
-            self._auto_stop_task = None
         await self._call("scantarget", address, duration)
-        if duration:
-            self._auto_stop_task = asyncio.create_task(self._auto_stop(duration))
 
     async def connect(self, address: str) -> dict[str, Any]:
         return await self._call("connect", address)
