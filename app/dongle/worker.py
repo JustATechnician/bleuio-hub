@@ -8,6 +8,7 @@ import queue
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from app.config import BLEUIO_PIDS, BLEUIO_VID, SCAN_DEFAULT_SEC
@@ -26,6 +27,27 @@ from app.dongle.parser import (
 )
 
 log = logging.getLogger(__name__)
+
+_AGENT_DEBUG_LOG = Path(__file__).resolve().parent.parent.parent / "debug-4e7605.log"
+
+
+def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict[str, Any] | None = None) -> None:
+    # #region agent log
+    try:
+        entry = {
+            "sessionId": "4e7605",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data or {},
+            "timestamp": int(time.time() * 1000),
+            "runId": "serial-recovery",
+        }
+        with _AGENT_DEBUG_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
 
 def _as_dict_list(raw: Any) -> list[dict[str, Any]]:
@@ -67,6 +89,9 @@ class BleuIoStation(Station):
         self._scan_buffer: list[str] = []
         self._gatt_lines: list[str] = []
         self._gatt_ready = threading.Event()
+        self._connect_ready = threading.Event()
+        self._scan_timer_task: asyncio.Task | None = None
+        self._serial_failed = False
 
     async def start(self) -> None:
         loop = asyncio.get_running_loop()
@@ -76,13 +101,14 @@ class BleuIoStation(Station):
     def _open(self) -> None:
         from bleuio_lib.bleuio_funcs import BleuIO
         try:
-            self._dongle = BleuIO(port=self.port, timeout=0.05, exclusive_mode=True, rx_delay=0.01)
+            self._dongle = BleuIO(port=self.port, timeout=0.05, exclusive_mode=True, rx_delay=0)
         except TypeError:
             # Older library without exclusive_mode / rx_delay.
             self._dongle = BleuIO(port=self.port, timeout=1)
 
         self._dongle.register_scan_cb(self._on_scan)
         self._dongle.register_evt_cb(self._on_evt)
+        self._install_bleuio_hooks()
         try:
             self._dongle.at_dual()
         except Exception as exc:
@@ -144,6 +170,245 @@ class BleuIoStation(Station):
         except Exception as exc:
             log.warning("GETMAC failed on %s: %s", self.port, exc)
 
+    def _serial_healthy(self) -> bool:
+        dongle = self._dongle
+        if dongle is None:
+            return False
+        serial = getattr(dongle, "_serial", None)
+        if serial is None or not serial.is_open:
+            return False
+        return bool(getattr(dongle, "_reader_alive", False))
+
+    def _stop_reader_safe(self, dongle: Any) -> None:
+        if getattr(dongle, "_reader_alive", False):
+            dongle._stop_reader()
+            return
+        reader = getattr(dongle, "receiver_thread", None)
+        serial = getattr(dongle, "_serial", None)
+        if reader is not None and reader.is_alive():
+            dongle._reader_alive = False
+            try:
+                if serial is not None and hasattr(serial, "cancel_read"):
+                    serial.cancel_read()
+            except Exception:
+                pass
+            reader.join(timeout=2.0)
+
+    def _reopen_serial_port(self) -> bool:
+        dongle = self._dongle
+        if dongle is None:
+            return False
+        # #region agent log
+        _agent_dbg(
+            "S1",
+            "worker.py:_reopen_serial_port",
+            "reopening serial port",
+            {
+                "reader_alive": bool(getattr(dongle, "_reader_alive", False)),
+                "serial_open": bool(getattr(getattr(dongle, "_serial", None), "is_open", False)),
+            },
+        )
+        # #endregion
+        try:
+            import serial
+
+            self._stop_reader_safe(dongle)
+            serial_obj = getattr(dongle, "_serial", None)
+            if serial_obj is not None:
+                try:
+                    if serial_obj.is_open:
+                        serial_obj.close()
+                except Exception:
+                    pass
+            dongle._serial = serial.Serial(
+                port=self.port,
+                baudrate=dongle.baud,
+                parity="N",
+                stopbits=1,
+                bytesize=8,
+                timeout=dongle.timeout,
+                write_timeout=dongle.w_timeout,
+                exclusive=dongle.exclusive_mode,
+            )
+            dongle.rx_buffer = b""
+            dongle._start_reader()
+            self._serial_failed = False
+            ok = self._serial_healthy()
+            # #region agent log
+            _agent_dbg("S1", "worker.py:_reopen_serial_port", "reopen result", {"ok": ok})
+            # #endregion
+            return ok
+        except Exception as exc:
+            log.error("Serial reopen failed on %s: %s", self.id, exc)
+            # #region agent log
+            _agent_dbg("S1", "worker.py:_reopen_serial_port", "reopen failed", {"error": str(exc)})
+            # #endregion
+            return False
+
+    def _recover_serial(self) -> bool:
+        if self._reopen_serial_port():
+            return True
+        dongle = self._dongle
+        if dongle is None:
+            return False
+        # #region agent log
+        _agent_dbg("S1", "worker.py:_recover_serial", "soft reopen failed; full init", {})
+        # #endregion
+        try:
+            self._stop_reader_safe(dongle)
+            serial_obj = getattr(dongle, "_serial", None)
+            if serial_obj is not None:
+                try:
+                    if serial_obj.is_open:
+                        serial_obj.close()
+                except Exception:
+                    pass
+            dongle._serial = None
+            dongle.dongle_reconnect_retry_cnt = 0
+            dongle._BleuIO__init_serial()
+            self._serial_failed = False
+            ok = self._serial_healthy()
+            # #region agent log
+            _agent_dbg("S1", "worker.py:_recover_serial", "full init result", {"ok": ok})
+            # #endregion
+            return ok
+        except Exception as exc:
+            log.error("Serial recovery failed on %s: %s", self.id, exc)
+            # #region agent log
+            _agent_dbg("S1", "worker.py:_recover_serial", "full init failed", {"error": str(exc)})
+            # #endregion
+            return False
+
+    def _ensure_serial(self, context: str) -> bool:
+        healthy = self._serial_healthy()
+        # #region agent log
+        _agent_dbg("S2", "worker.py:_ensure_serial", context, {"healthy": healthy})
+        # #endregion
+        if healthy:
+            return True
+        log.warning("Serial link unhealthy on %s (%s); recovering", self.id, context)
+        return self._recover_serial()
+
+    def _install_bleuio_hooks(self) -> None:
+        """BleuIO routes scan-complete actions outside the evt callback; hook RX handlers."""
+        dongle = self._dongle
+        if dongle is None:
+            return
+        station = self
+        orig_scan = dongle._BleuIO__process_scan_result
+        orig_action = dongle._BleuIO__process_action
+        orig_cmd = dongle._BleuIO__process_command_response
+
+        def cmd_hook(line: str) -> None:
+            orig_cmd(line)
+            if station.connected_addr is not None:
+                station._ingest_gatt_serial_line(line)
+
+        def scan_hook(line: str) -> None:
+            orig_scan(line)
+            if not dongle.__saveScanRsp or dongle._scan_cb is None:
+                return
+            if '{"S' in line:
+                return
+            if "Device Data" in line or re.search(r"Device:\s*\[", line, re.I):
+                try:
+                    dongle._scan_cb([line])
+                except Exception as exc:
+                    log.warning("scan text callback on %s: %s", station.id, exc)
+
+        def action_hook(line: str) -> None:
+            orig_action(line)
+            if "scan completed" in line.lower() and "action" in line.lower():
+                station._finish_scan()
+            if re.search(r'"action"\s*:\s*"connected"', line, re.I):
+                station._note_connected(line)
+
+        dongle._BleuIO__process_scan_result = scan_hook
+        dongle._BleuIO__process_action = action_hook
+        dongle._BleuIO__process_command_response = cmd_hook
+
+        orig_poll = dongle._BleuIO__poll_serial
+
+        def poll_hook() -> None:
+            orig_poll()
+            if not station._serial_healthy():
+                station._serial_failed = True
+                # #region agent log
+                _agent_dbg("S3", "worker.py:poll_hook", "serial poll thread ended", {"context": "rx_dead"})
+                # #endregion
+
+        dongle._BleuIO__poll_serial = poll_hook
+
+    def _maybe_recover_serial(self, context: str) -> bool:
+        if self._serial_healthy():
+            return True
+        log.warning("Serial link dropped on %s (%s); reopening", self.id, context)
+        return self._recover_serial()
+
+    def _request_gatt_browse(self) -> Any | None:
+        if not self._maybe_recover_serial("gatt_browse"):
+            return None
+        try:
+            return self._dongle.at_get_services()
+        except Exception as exc:
+            log.warning("GETSERVICES: %s", exc)
+            return None
+
+    def _ingest_gatt_serial_line(self, line: str) -> None:
+        stripped = line.strip()
+        if not stripped:
+            return
+        lower = stripped.lower()
+        if "gattc_browse_completed" in lower or "gattc_discover_completed" in lower:
+            status_ok = bool(re.search(r"status\s*=\s*0\b", stripped, re.I)) or '"status":0' in stripped.replace(" ", "")
+            # #region agent log
+            _agent_dbg(
+                "G1",
+                "worker.py:_ingest_gatt_serial_line",
+                "browse completed line",
+                {"status_ok": status_ok, "gatt_lines": len(self._gatt_lines), "line_head": stripped[:120]},
+            )
+            # #endregion
+            if status_ok:
+                self._finalize_gatt()
+            else:
+                self._gatt_ready.set()
+            return
+        if "handle_evt" in lower:
+            return
+        if stripped.startswith("{"):
+            try:
+                obj = json.loads(stripped)
+            except json.JSONDecodeError:
+                obj = None
+            if isinstance(obj, dict):
+                converted = gatt_json_to_line(obj)
+                if converted:
+                    if converted not in self._gatt_lines:
+                        self._gatt_lines.append(converted)
+                    return
+                evt = obj.get("evt")
+                if isinstance(evt, dict):
+                    converted = gatt_json_to_line(evt)
+                    if converted and converted not in self._gatt_lines:
+                        self._gatt_lines.append(converted)
+                        return
+        if re.search(r"\b(serv|char|desc|----)\b", stripped, re.I):
+            self._ingest_gatt_fragment(stripped)
+
+    def _ingest_gatt_from_objs(self, objs: list[dict[str, Any]]) -> None:
+        for obj in objs:
+            candidates: list[Any] = [obj]
+            evt = obj.get("evt")
+            if isinstance(evt, dict):
+                candidates.append(evt)
+            for cand in candidates:
+                if not isinstance(cand, dict):
+                    continue
+                converted = gatt_json_to_line(cand)
+                if converted and converted not in self._gatt_lines:
+                    self._gatt_lines.append(converted)
+
     def _worker(self) -> None:
         while self._running:
             try:
@@ -166,6 +431,7 @@ class BleuIoStation(Station):
         return await asyncio.wrap_future(fut)
 
     async def close(self) -> None:
+        self._cancel_scan_timer()
         self._running = False
         try:
             await self._call("shutdown")
@@ -201,6 +467,9 @@ class BleuIoStation(Station):
         errors: list[str] = []
         dongle = self._dongle
         if not dongle:
+            return errors
+        if not self._maybe_recover_serial("radio_idle"):
+            errors.append("serial: link unavailable")
             return errors
         try:
             dongle.stop_scan()
@@ -251,9 +520,109 @@ class BleuIoStation(Station):
             log.warning("reset_idle on %s: %s", self.id, "; ".join(errors))
         return {"ok": not errors, "errors": errors}
 
+    def _is_connected_action(self, text: str) -> bool:
+        return bool(re.search(r'"action"\s*:\s*"connected"', text, re.I))
+
+    def _note_connected(self, raw: str = "") -> None:
+        if not self.connected_addr:
+            return
+        self.connected = True
+        self._connect_ready.set()
+        self.emit("connection", connected=True, address=self.connected_addr, raw=raw)
+
+    def _wait_for_connection(self, timeout: float = 20.0) -> bool:
+        dongle = self._dongle
+        if dongle is not None and getattr(dongle.status, "isConnected", False):
+            self._note_connected()
+            return True
+        if self._connect_ready.wait(timeout=timeout):
+            return True
+        deadline = time.time() + max(0.0, timeout)
+        while time.time() < deadline:
+            if dongle is not None and getattr(dongle.status, "isConnected", False):
+                self._note_connected()
+                return True
+            if not self.connected_addr:
+                return False
+            if not self._serial_healthy():
+                self._maybe_recover_serial("connect_wait")
+            time.sleep(0.1)
+        return bool(dongle is not None and getattr(dongle.status, "isConnected", False))
+
+    def _wait_for_gatt_browse(self, timeout: float = 20.0, idle_grace: float = 1.5) -> bool:
+        if self._gatt_ready.is_set():
+            return True
+        deadline = time.time() + timeout
+        last_count = 0
+        idle_since: float | None = None
+        while time.time() < deadline:
+            if self._gatt_ready.is_set():
+                # #region agent log
+                _agent_dbg(
+                    "G2",
+                    "worker.py:_wait_for_gatt_browse",
+                    "browse ready event",
+                    {"gatt_lines": len(self._gatt_lines), "reason": "event"},
+                )
+                # #endregion
+                return True
+            count = len(self._gatt_lines)
+            if count != last_count:
+                last_count = count
+                idle_since = time.time()
+            elif count > 0 and idle_since is not None and time.time() - idle_since >= idle_grace:
+                # #region agent log
+                _agent_dbg(
+                    "G2",
+                    "worker.py:_wait_for_gatt_browse",
+                    "browse idle grace",
+                    {"gatt_lines": count, "reason": "idle"},
+                )
+                # #endregion
+                return True
+            if not self._serial_healthy():
+                if self._maybe_recover_serial("gatt_wait") and self.connected_addr:
+                    self._request_gatt_browse()
+                    idle_since = None
+            time.sleep(0.1)
+        # #region agent log
+        _agent_dbg(
+            "G2",
+            "worker.py:_wait_for_gatt_browse",
+            "browse timeout",
+            {"gatt_lines": len(self._gatt_lines), "reason": "timeout"},
+        )
+        # #endregion
+        return bool(self._gatt_lines)
+
+    def _try_ingest_scan_evt(self, objs: list[dict[str, Any]]) -> None:
+        if not self.scanning:
+            return
+        for obj in objs:
+            candidates: list[Any] = [obj]
+            evt = obj.get("evt")
+            if isinstance(evt, dict):
+                candidates.append(evt)
+            for cand in candidates:
+                if not isinstance(cand, dict):
+                    continue
+                action = str(cand.get("action") or "").lower()
+                if action in {"scanning", "scan completed"}:
+                    continue
+                if not (cand.get("addr") or cand.get("data") or cand.get("adv") or cand.get("scandata") or "SF" in cand or "ST" in cand):
+                    continue
+                parsed = parse_scan_payload(cand)
+                if not parsed:
+                    continue
+                merged = self.merge_device(parsed)
+                self.emit("scan", device=merged)
+                if parsed.get("adv_hex"):
+                    self.emit("adv", device=merged)
+
     def _on_scan(self, scan_input: Any) -> None:
         parsed = parse_scan_payload(scan_input)
         if not parsed:
+            log.debug("scan parse miss on %s: %s", self.id, str(scan_input)[:200])
             return
         merged = self.merge_device(parsed)
         self.emit("scan", device=merged)
@@ -265,6 +634,8 @@ class BleuIoStation(Station):
         objs = _as_dict_list(evt_input)
         if objs:
             text = json.dumps(objs)
+            self._ingest_gatt_from_objs([o for o in objs if isinstance(o, dict)])
+            self._try_ingest_scan_evt([o for o in objs if isinstance(o, dict)])
         else:
             text = str(evt_input)
         lower = text.lower()
@@ -274,10 +645,9 @@ class BleuIoStation(Station):
             self._finish_scan()
         if "disconnected" in lower or "gap_disconnected" in lower:
             self._mark_idle(raw=text)
-        elif self.connected_addr and "connected" in lower and "disconnected" not in lower:
-            self.connected = True
-            self.emit("connection", connected=True, address=self.connected_addr, raw=text)
-        if "gattc_browse_completed" in lower:
+        elif self._is_connected_action(text):
+            self._note_connected(text)
+        if "gattc_browse_completed" in lower or "gattc_discover_completed" in lower:
             status_ok = bool(re.search(r"status\s*=\s*0\b", text, re.I)) or '"status":0' in text.replace(" ", "")
             if status_ok:
                 self._finalize_gatt()
@@ -330,17 +700,17 @@ class BleuIoStation(Station):
         self.emit("scan_complete")
         self.emit("station", station=self.snapshot())
 
-    def _send_timed_findscandata(self, filter_hex: str, duration: int) -> None:
-        """Start AT+FINDSCANDATA with firmware =seconds (non-blocking on worker thread)."""
+    def _start_findscandata(self, filter_hex: str) -> None:
+        """Start infinite FINDSCANDATA via library (emits SF lines); duration handled by watchdog."""
         dongle = self._dongle
         scandata = (filter_hex or "").upper()
-        sec = max(1, int(duration))
         dongle.rx_scanning_results = []
         dongle.__saveScanRsp = True
-        cmd = f"AT+FINDSCANDATA={scandata}={sec}"
-        dongle._serial.write((cmd + "\r").encode())
+        dongle.at_findscandata(scandata, timeout=0)
 
     def _do_start_scan(self, duration: int, filter_hex: str) -> None:
+        if not self._ensure_serial("scan_start"):
+            raise RuntimeError("Dongle serial link unavailable")
         dongle = self._dongle
         if self.connected:
             raise RuntimeError("Cannot scan while connected")
@@ -350,7 +720,7 @@ class BleuIoStation(Station):
             pass
         self.scanning = True
         self.emit("station", station=self.snapshot())
-        self._send_timed_findscandata(filter_hex, duration)
+        self._start_findscandata(filter_hex)
 
     def _do_stop_scan(self) -> None:
         try:
@@ -369,6 +739,13 @@ class BleuIoStation(Station):
         self._dongle.at_scantarget(addr)
 
     def _do_connect(self, address: str) -> dict[str, Any]:
+        if not self._ensure_serial("connect_start"):
+            return {
+                "ok": False,
+                "error": "Dongle serial link unavailable",
+                "address": address,
+                "services": [],
+            }
         try:
             self._dongle.stop_scan()
         except Exception:
@@ -377,14 +754,36 @@ class BleuIoStation(Station):
         self.connected_addr = address
         self._gatt_lines = []
         self._gatt_ready.clear()
-        resp = self._dongle.at_gapconnect(address)
-        time.sleep(0.5)
+        self._connect_ready.clear()
+        connect_err = None
         try:
-            browse = self._dongle.at_get_services()
+            resp = self._dongle.at_gapconnect(address)
         except Exception as exc:
-            log.warning("GETSERVICES: %s", exc)
-            browse = None
-        if not self._gatt_ready.wait(timeout=20):
+            connect_err = str(exc)
+            resp = None
+        resp_text = collect_text(resp) if resp is not None else ""
+        ack = getattr(resp, "Ack", None) or {}
+        ack_err = None
+        if isinstance(ack, dict) and ack.get("err") not in (0, None, "0"):
+            ack_err = ack.get("errMsg") or str(ack.get("err"))
+        if connect_err or ack_err:
+            self.connected = False
+            self.connected_addr = None
+            self.emit("connection", connected=False, address=address, raw=resp_text or connect_err or "")
+            self.emit("station", station=self.snapshot())
+            return {"ok": False, "error": ack_err or connect_err, "address": address, "services": []}
+        conn_ok = self._wait_for_connection(timeout=20.0)
+        if not conn_ok:
+            self.connected = False
+            self.connected_addr = None
+            self.emit("connection", connected=False, address=address, raw="Connection timed out")
+            self.emit("station", station=self.snapshot())
+            return {"ok": False, "error": "Connection timed out", "address": address, "services": []}
+        time.sleep(0.2)
+        browse = None
+        if not self._gatt_ready.is_set() and not self._gatt_lines:
+            browse = self._request_gatt_browse()
+        if not self._wait_for_gatt_browse(timeout=20.0):
             log.warning("GATT browse timed out on %s (%d lines buffered)", self.id, len(self._gatt_lines))
         services = parse_gatt_browse("\n".join(self._gatt_lines))
         if not services and browse is not None:
@@ -393,7 +792,20 @@ class BleuIoStation(Station):
             self.services = services
         self.connected = True
         pub = public_services(self.services)
-        self.emit("connection", connected=True, address=address, raw=collect_text(resp))
+        # #region agent log
+        _agent_dbg(
+            "S4",
+            "worker.py:_do_connect",
+            "connect complete",
+            {
+                "service_count": len(pub),
+                "char_count": sum(len(s.get("characteristics") or []) for s in pub),
+                "gatt_lines": len(self._gatt_lines),
+                "serial_healthy": self._serial_healthy(),
+            },
+        )
+        # #endregion
+        self.emit("connection", connected=True, address=address, raw=resp_text)
         self.emit("gatt", services=pub)
         self.emit("station", station=self.snapshot())
         return {"ok": True, "address": address, "services": pub}
@@ -438,6 +850,8 @@ class BleuIoStation(Station):
         raise RuntimeError(f"Cannot resolve characteristic {handle_or_uuid}")
 
     def _do_read(self, handle_or_uuid: str) -> dict[str, Any]:
+        if not self._maybe_recover_serial("read"):
+            return {"ok": False, "error": "Dongle serial link unavailable"}
         handle = self._handle(handle_or_uuid)
         char = resolve_handle(self.services, handle)
         try:
@@ -552,12 +966,31 @@ class BleuIoStation(Station):
         resp = self._dongle.at_enter_passkey(passkey)
         return {"ok": True, "raw": collect_text(resp)}
 
+    def _cancel_scan_timer(self) -> None:
+        if self._scan_timer_task:
+            self._scan_timer_task.cancel()
+            self._scan_timer_task = None
+
+    async def _scan_watchdog(self, duration: int) -> None:
+        try:
+            await asyncio.sleep(max(duration, 1) + 1.0)
+            if self.scanning:
+                await self._call("stop_scan")
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if self._scan_timer_task is asyncio.current_task():
+                self._scan_timer_task = None
+
     async def start_scan(self, duration: int = 0, filter_hex: str = "") -> None:
         if duration <= 0:
             duration = SCAN_DEFAULT_SEC
+        self._cancel_scan_timer()
         await self._call("start_scan", duration, filter_hex)
+        self._scan_timer_task = asyncio.create_task(self._scan_watchdog(duration))
 
     async def stop_scan(self) -> None:
+        self._cancel_scan_timer()
         await self._call("stop_scan")
 
     async def scantarget(self, address: str, duration: int = 0) -> None:

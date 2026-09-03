@@ -345,9 +345,18 @@ function applyStationSnapshot(station) {
   if (!station.connected) state.notifies.clear();
 }
 
+function countChars(services) {
+  return (services || []).reduce((n, s) => n + (s.characteristics || []).length, 0);
+}
+
 function applyConnectResult(res) {
+  if (!res?.ok) {
+    toast(res?.error || "Connect failed", "err");
+    return;
+  }
   if (res?.address) state.connectedAddr = res.address;
   if (Array.isArray(res?.services)) state.services = res.services;
+  toast(`Connected ${res.address || ""} · ${(res.services || []).length} service(s), ${countChars(res.services)} char(s)`);
   renderAll();
 }
 
