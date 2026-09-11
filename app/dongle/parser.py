@@ -471,12 +471,20 @@ def parse_gatt_response(resp: Any) -> list[dict[str, Any]]:
 def public_services(services: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop non-JSON internal fields (bytes values, mock flags) before sending to clients."""
     skip = {"value", "deny_read", "deny_write", "extra_write"}
+    keep = {"expected", "blem_characteristic", "symbol", "access", "format", "data_size", "source"}
     out = []
     for svc in services or []:
         item = {k: v for k, v in svc.items() if k != "characteristics"}
+        for k in keep:
+            if k in svc:
+                item[k] = svc[k]
         chars = []
         for char in svc.get("characteristics") or []:
-            chars.append({k: v for k, v in char.items() if k not in skip})
+            out_char = {k: v for k, v in char.items() if k not in skip}
+            for k in keep:
+                if k in char:
+                    out_char[k] = char[k]
+            chars.append(out_char)
         item["characteristics"] = chars
         out.append(item)
     return out

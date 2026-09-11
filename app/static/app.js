@@ -462,6 +462,12 @@ function renderGatt() {
   }
   const missing = [...adv].filter((u) => u && !gattUuids.has(u) && u.length <= 8);
   const extra = [...gattUuids].filter((u) => u && !adv.has(u) && !["1800", "1801"].includes(u) && u.length <= 8);
+  const needsHandles = (state.services || []).some((s) =>
+    (s.characteristics || []).some((c) => c.expected && !c.handle)
+  );
+  const mapHint = needsHandles
+    ? `<p class="warn-text">GATT tree from firmware map (zephyr). Read/write need handles — use “Refresh handles from dongle” (slow for large GATT).</p>`
+    : "";
   const hint =
     missing.length || extra.length
       ? `<p class="warn-text">Advertised vs GATT: missing in GATT [${missing.join(", ") || "none"}]; extra in GATT [${extra.join(", ") || "none"}]</p>`
@@ -473,16 +479,18 @@ function renderGatt() {
         .map((ch) => {
           const flags = ch.properties?.flags || {};
           const mask = ch.properties?.mask || "";
-          const canR = flags.read;
-          const canW = flags.write || flags.write_without_response;
-          const canN = flags.notify;
-          const canI = flags.indicate;
+          const expectedOnly = ch.expected && !ch.handle;
+          const canR = !expectedOnly && flags.read;
+          const canW = !expectedOnly && (flags.write || flags.write_without_response);
+          const canN = !expectedOnly && flags.notify;
+          const canI = !expectedOnly && flags.indicate;
           const on = state.notifies.has(ch.handle);
-          return `<div class="char" data-handle="${esc(ch.handle)}">
+          const expTag = expectedOnly ? `<span class="warn-text">expected (not discovered)</span>` : ch.expected ? `<span class="muted">expected</span>` : "";
+          return `<div class="char${expectedOnly ? " muted" : ""}" data-handle="${esc(ch.handle || "")}">
             <div class="row space">
               <div>
-                <div class="name">${esc(ch.name || "Characteristic")} <span class="mono muted">${esc(ch.uuid)}</span></div>
-                <div class="muted">handle ${esc(ch.handle)} · <span class="props">${esc(mask)}</span></div>
+                <div class="name">${esc(ch.name || ch.blem_characteristic || "Characteristic")} <span class="mono muted">${esc(ch.uuid)}</span> ${expTag}</div>
+                <div class="muted">${ch.handle ? `handle ${esc(ch.handle)} · ` : ""}<span class="props">${esc(mask || (expectedOnly ? "—" : ""))}</span></div>
               </div>
               <div class="row">
                 <button data-read="${esc(ch.handle)}" ${canR ? "" : "disabled"} type="button">Read</button>
@@ -513,8 +521,10 @@ function renderGatt() {
   $("tab-gatt").innerHTML = `
     <div class="toolbar">
       <strong>${esc(state.connectedAddr)}</strong>
+      <button id="btn-gatt-refresh" type="button">Refresh handles from dongle</button>
       <button id="btn-disc-2" class="danger" type="button">Disconnect</button>
     </div>
+    ${mapHint}
     ${hint}
     ${html || `<div class="empty">No services discovered.</div>`}
   `;
@@ -686,6 +696,16 @@ document.addEventListener("click", async (ev) => {
       state.services = [];
       state.notifies.clear();
       renderAll();
+    }
+    if (t.id === "btn-gatt-refresh") {
+      toast("Refreshing GATT handles from dongle…");
+      const res = await api(`/api/stations/${state.stationId}/gatt/refresh`, { method: "POST", body: {} });
+      if (res?.services) state.services = res.services;
+      toast(
+        res?.ok ? `Handles refreshed · ${countChars(res.services)} char(s)` : res?.error || "Refresh failed",
+        res?.ok ? "" : "err"
+      );
+      renderGatt();
     }
     if (t.id === "btn-target" && state.selectedAddr) {
       syncScanToolbar();

@@ -1,0 +1,336 @@
+tags: ['G2BLEM_SERVICE_TABLE']
+minVersion: null
+maxVersion: null
+table:
+- uuid: 2A00
+  service: GENERIC_ACCESS
+  characteristic: DEVICE_NAME
+  dataSize: 11
+  format: ASCII
+  defaultValue: SBD-DC TOOL
+  access:
+    r: PUBLIC
+    w: PUBLIC
+- uuid: 2A01
+  service: GENERIC_ACCESS
+  characteristic: APPEARANCE
+  dataSize: 2
+  format: HEX
+  defaultValue: C003
+  access:
+    r: PUBLIC
+- uuid: 2A04
+  service: GENERIC_ACCESS
+  characteristic: CONNECTION_PARAMETERS
+  dataSize: 8
+  format: HEX
+  defaultValue: 0600900100009001
+  access:
+    r: PUBLIC
+- uuid: 2AA6
+  service: GENERIC_ACCESS
+  characteristic: CENTRAL_ADDRESS_RESOLUTION
+  dataSize: 1
+  format: HEX
+  defaultValue: '01'
+  access:
+    r: PUBLIC
+- uuid: 2A23
+  service: DEVICE_INFORMATION
+  characteristic: SYSTEM_ID
+  dataSize: 8
+  format: HEX
+  defaultValue: ''
+  access:
+    r: PUBLIC
+- uuid: 2A24
+  service: DEVICE_INFORMATION
+  characteristic: MODEL_NUMBER
+  dataSize: 16
+  format: ASCII
+  defaultValue: SBD-ESL-AC
+  access:
+    r: PUBLIC
+    w: PTM
+- uuid: 2A25
+  service: DEVICE_INFORMATION
+  characteristic: SERIAL_NUMBER
+  dataSize: 7
+  format: ASCII
+  defaultValue: '0000000'
+  access:
+    r: PUBLIC
+    w: PTM
+- uuid: 2A26
+  service: DEVICE_INFORMATION
+  characteristic: FIRMWARE_REVISION
+  dataSize: 9
+  format: ASCII
+  defaultValue: FW 8.046
+  access:
+    r: PUBLIC
+- uuid: 2A27
+  service: DEVICE_INFORMATION
+  characteristic: HARDWARE_REVISION
+  dataSize: 8
+  format: ASCII
+  defaultValue: 'HW: VG'
+  access:
+    r: PUBLIC
+    w: PTM
+- uuid: 2A29
+  service: DEVICE_INFORMATION
+  characteristic: MANUFACTURER_NAME
+  dataSize: 22
+  format: ASCII
+  defaultValue: Stanley Black & Decker
+  access:
+    r: PUBLIC
+- uuid: 4B5810518BCC11E6BDF40800200C9A66
+  service: TEST_MODE
+  characteristic: PASSWORD
+  dataSize: 16
+  format: HEX
+  defaultValue: null
+  access:
+    w: PUBLIC
+- uuid: 4B5810548BCC11E6BDF40800200C9A66
+  service: TEST_MODE
+  characteristic: LAST_COMMAND
+  dataSize: 1
+  format: ASCII
+  defaultValue: ''
+  access:
+    r: PTM
+- uuid: 4B5810568BCC11E6BDF40800200C9A66
+  service: TEST_MODE
+  characteristic: VCELL_MEASURE
+  dataSize: 2
+  format: HEX
+  defaultValue: null
+  access:
+    r: PTM
+- uuid: 4B5810588BCC11E6BDF40800200C9A66
+  service: TEST_MODE
+  characteristic: PTM_MODE_ENABLE_OVERRIDE
+  dataSize: 1
+  format: HEX
+  defaultValue: '00'
+  access:
+    r: PTM
+    w: PTM
+- uuid: 4B58105E8BCC11E6BDF40800200C9A66
+  service: TEST_MODE
+  characteristic: PRODUCT_TYPE_INDEX
+  dataSize: 3
+  format: HEX
+  defaultValue: FE010C
+  access:
+    r: PUBLIC
+    w: PTM
+- uuid: 4B58105F8BCC11E6BDF40800200C9A66
+  service: TEST_MODE
+  characteristic: MANUFACTURER_DATE
+  dataSize: 14
+  format: ASCII
+  defaultValue: ''
+  access:
+    r: PUBLIC
+    w: PTM
+- uuid: 4B5810628BCC11E6BDF40800200C9A66
+  service: TEST_MODE
+  characteristic: HISTORY_LOG
+  dataSize: 20
+  format: HEX
+  defaultValue: '0000000000000000000000000000000000000000'
+  access:
+    r: PUBLIC
+- uuid: 4B5810638BCC11E6BDF40800200C9A66
+  service: TEST_MODE
+  characteristic: FREQUENCY_LOG
+  dataSize: 11
+  format: HEX
+  defaultValue: '0000000000000000000000'
+  access:
+    r: PUBLIC
+- uuid: 4B5810648BCC11E6BDF40800200C9A66
+  service: TEST_MODE
+  characteristic: TESTER_SIGNOFF
+  dataSize: 1
+  format: HEX
+  defaultValue: '00'
+  access:
+    r: PUBLIC
+    w: PTM
+- uuid: 4B5810658BCC11E6BDF40800200C9A66
+  service: TEST_MODE
+  characteristic: MAC_ADDRESS_UPDATE
+  dataSize: 6
+  format: HEX
+  defaultValue: ''
+  access:
+    r: PUBLIC
+    w: PTM
+- uuid: EDC91B416F7811EAAB120800200C9A66
+  service: SECURE_ACCESS
+  characteristic: ACCESS_PASSWORD
+  dataSize: 8
+  format: HEX
+  defaultValue: '0000000000000000'
+  access:
+    r: PUBLIC
+    w: PUBLIC
+- uuid: EDC91B426F7811EAAB120800200C9A66
+  service: SECURE_ACCESS
+  characteristic: SOLD_STATUS
+  dataSize: 1
+  format: HEX
+  defaultValue: '00'
+  access:
+    r: PUBLIC
+    w: PUBLIC
+- uuid: EDC91B436F7811EAAB120800200C9A66
+  service: SECURE_ACCESS
+  characteristic: RANDOM_NUMBER
+  dataSize: 8
+  format: HEX
+  defaultValue: null
+  access:
+    r: PUBLIC
+- uuid: EDC91B446F7811EAAB120800200C9A66
+  service: SECURE_ACCESS
+  characteristic: AUTHORIZATION_STATUS
+  dataSize: 1
+  format: HEX
+  defaultValue: '00'
+  access:
+    r: PUBLIC
+- uuid: EDC91B456F7811EAAB120800200C9A66
+  service: SECURE_ACCESS
+  characteristic: CHECKOUT_MODE
+  dataSize: 1
+  format: HEX
+  defaultValue: '00'
+  access:
+    r: PUBLIC
+    w: PUBLIC
+- uuid: EDC91B466F7811EAAB120800200C9A66
+  service: SECURE_ACCESS
+  characteristic: ACCESS_MODE
+  dataSize: 1
+  format: HEX
+  defaultValue: '00'
+  access:
+    r: PUBLIC
+    w: PUBLIC
+- uuid: EDC91B476F7811EAAB120800200C9A66
+  service: SECURE_ACCESS
+  characteristic: ENGINEERING_BYPASS
+  dataSize: 1
+  format: HEX
+  defaultValue: '00'
+  access:
+    w: PTM
+- uuid: EDC91B486F7811EAAB120800200C9A66
+  service: SECURE_ACCESS
+  characteristic: CONNECTION_TIMEOUT
+  dataSize: 4
+  format: HEX
+  defaultValue: 60EA0000
+  access:
+    r: PUBLIC
+    w: PUBLIC
+- uuid: EDC91B496F7811EAAB120800200C9A66
+  service: SECURE_ACCESS
+  characteristic: SM_CONTROL_RX
+  dataSize: 20
+  format: HEX
+  defaultValue: '0000000000000000000000000000000000000000'
+  access:
+    w: PUBLIC
+- uuid: EDC91B506F7811EAAB120800200C9A66
+  service: SECURE_ACCESS
+  characteristic: SM_CONTROL_TX
+  dataSize: 20
+  format: HEX
+  defaultValue: '0000000000000000000000000000000000000000'
+  access:
+    r: PUBLIC
+- uuid: 18EA82915B4211E6BDF40800200C9A66
+  service: DC_TOOL
+  characteristic: ENABLE
+  dataSize: 1
+  format: HEX
+  defaultValue: '01'
+  access:
+    r: PUBLIC
+    w: DC_TOOL
+- uuid: 18EA82935B4211E6BDF40800200C9A66
+  service: DC_TOOL
+  characteristic: BACKUP_CELL
+  dataSize: 1
+  format: HEX
+  defaultValue: '00'
+  access:
+    r: PUBLIC
+- uuid: 18EA829F5B4211E6BDF40800200C9A66
+  service: DC_TOOL
+  characteristic: TIME
+  dataSize: 7
+  format: HEX
+  defaultValue: null
+  access:
+    r: PUBLIC
+    w:
+    - PTM
+    - NUS
+- uuid: 18EA82A45B4211E6BDF40800200C9A66
+  service: DC_TOOL
+  characteristic: OAD
+  dataSize: 16
+  format: HEX
+  defaultValue: null
+  access:
+    w: PUBLIC
+- uuid: 18EA82B95B4211E6BDF40800200C9A66
+  service: DC_TOOL
+  characteristic: PRODUCT_TYPE_INDEX
+  dataSize: 3
+  format: HEX
+  defaultValue: FE010C
+  access:
+    r: PUBLIC
+    w: PTM
+- uuid: 18EA82BB5B4211E6BDF40800200C9A66
+  service: DC_TOOL
+  characteristic: MCM_FIRMWARE_REVISION
+  dataSize: 2
+  format: HEX
+  defaultValue: '0000'
+  access:
+    r: PUBLIC
+- uuid: 18EA82BC5B4211E6BDF40800200C9A66
+  service: DC_TOOL
+  characteristic: MCM_HARDWARE_REVISION
+  dataSize: 2
+  format: HEX
+  defaultValue: '0000'
+  access:
+    r: PUBLIC
+- uuid: 6E400002B5A3F393E0A9E50E24DCCA9E
+  service: NUS
+  characteristic: UART_RX
+  dataSize: 1
+  format: HEX
+  defaultValue: '00'
+  access:
+    w: NUS
+- uuid: 6E400003B5A3F393E0A9E50E24DCCA9E
+  service: NUS
+  characteristic: UART_TX
+  dataSize: 1
+  format: HEX
+  defaultValue: '00'
+  access:
+    r: NUS
+    n: NUS

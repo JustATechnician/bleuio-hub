@@ -60,7 +60,7 @@ class DongleManager:
         station = BleuIoStation(station_id, port)
         station.bind_loop(self._loop)  # type: ignore[arg-type]
         try:
-            await asyncio.wait_for(station.start(), timeout=12)
+            await asyncio.wait_for(station.start(), timeout=20)
             return station
         except Exception as exc:
             log.warning("Failed to open %s: %s", port, exc)
@@ -80,6 +80,8 @@ class DongleManager:
         log.info("Candidate serial ports: %s", ports)
         started = 0
         for index, port in enumerate(ports, start=1):
+            if index > 1:
+                await asyncio.sleep(2.0)
             station = await self._try_open_port(port, f"dongle-{index}")
             if not station:
                 continue

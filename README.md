@@ -98,7 +98,16 @@ Firmware: BleuIO Standard 2.2.1 or later (2.7.x recommended). BleuIO Pro is supp
 | `BLEUIO_PORT` | `8000` | HTTP port |
 | `BLEUIO_MOCK` | unset | `1` force mock; `0` real only; unset = real then mock fallback |
 | `BLEUIO_IDLE_TIMEOUT` | `300` | Seconds until an idle claim is released |
-| `BLEUIO_SCAN_SEC` | `8` | Default scan duration (seconds) in the Scan tab |
+| `BLEUIO_SCAN_SEC` | `30` | Default scan duration (seconds) in the Scan tab |
+| `BLEUIO_SERIAL_READ_TIMEOUT` | `1.0` | Dongle serial read timeout (seconds) |
+| `BLEUIO_SERIAL_WRITE_TIMEOUT` | `1.0` | Dongle serial write timeout (seconds); raise on Pi if init shows write timeouts |
+| `BLEUIO_GATT_BROWSE_TIMEOUT` | `30` | Max seconds to wait for GATT browse after connect |
+| `BLEUIO_GATT_BROWSE_IDLE` | `3.0` | Seconds of no new GATT lines before treating browse as complete |
+| `BLEUIO_ZEPHYR_MAP` | `zephyr.map` | Firmware linker map for expected GATT catalog |
+| `BLEUIO_BLEM_SERVICE_TABLE` | `G2BLEM_Service_Table.yaml` | UUID/name table merged with map symbols |
+| `BLEUIO_GATT_DISCOVERY` | `zephyr` if map loads, else `dongle` | `zephyr` = map catalog on connect (no GETSERVICES); `dongle` = full browse; `merge` = map on connect + manual refresh for handles |
+
+On connect, **zephyr** mode skips `GETSERVICES` and ATDS auto-dump so the serial link stays stable with 40+ characteristics. Use the GATT tab **Refresh handles from dongle** (or `POST /api/stations/{id}/gatt/refresh`) when you need live handles for read/write.
 
 ## Macros
 

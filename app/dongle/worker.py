@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import copy
 import json
 import logging
 import queue
@@ -11,8 +12,18 @@ import time
 from pathlib import Path
 from typing import Any
 
-from app.config import BLEUIO_PIDS, BLEUIO_VID, SCAN_DEFAULT_SEC
+from app.config import (
+    BLEUIO_PIDS,
+    BLEUIO_VID,
+    GATT_BROWSE_IDLE_SEC,
+    GATT_BROWSE_TIMEOUT_SEC,
+    SCAN_DEFAULT_SEC,
+    SERIAL_READ_TIMEOUT,
+    SERIAL_WRITE_TIMEOUT,
+)
+from app.gatt_discovery import atds_enabled_on_open, auto_browse_on_connect, get_gatt_discovery_mode
 from app.dongle.base import Station
+from app.dongle.zephyr_map import get_expected_gatt_catalog, merge_discovered_with_expected
 from app.dongle.parser import (
     ascii_preview,
     collect_text,
@@ -92,6 +103,8 @@ class BleuIoStation(Station):
         self._connect_ready = threading.Event()
         self._scan_timer_task: asyncio.Task | None = None
         self._serial_failed = False
+        self._connect_browse_pending = False
+        self._gatt_dongle_browse_active = False
 
     async def start(self) -> None:
         loop = asyncio.get_running_loop()
@@ -100,11 +113,22 @@ class BleuIoStation(Station):
 
     def _open(self) -> None:
         from bleuio_lib.bleuio_funcs import BleuIO
+        read_timeout = SERIAL_READ_TIMEOUT
+        write_timeout = SERIAL_WRITE_TIMEOUT
         try:
-            self._dongle = BleuIO(port=self.port, timeout=0.05, exclusive_mode=True, rx_delay=0)
+            self._dongle = BleuIO(
+                port=self.port,
+                timeout=read_timeout,
+                w_timeout=write_timeout,
+                exclusive_mode=True,
+                rx_delay=0,
+            )
         except TypeError:
-            # Older library without exclusive_mode / rx_delay.
-            self._dongle = BleuIO(port=self.port, timeout=1)
+            # Older library without exclusive_mode / rx_delay / w_timeout.
+            try:
+                self._dongle = BleuIO(port=self.port, timeout=read_timeout, w_timeout=write_timeout)
+            except TypeError:
+                self._dongle = BleuIO(port=self.port, timeout=max(read_timeout, 1.0))
 
         self._dongle.register_scan_cb(self._on_scan)
         self._dongle.register_evt_cb(self._on_evt)
@@ -125,7 +149,7 @@ class BleuIoStation(Station):
             elif hasattr(self._dongle, "atshowrssi"):
                 self._dongle.atshowrssi(True)
             if hasattr(self._dongle, "atds"):
-                self._dongle.atds(True)
+                self._dongle.atds(atds_enabled_on_open())
         except Exception as exc:
             log.debug("scan option setup: %s", exc)
 
@@ -301,7 +325,7 @@ class BleuIoStation(Station):
 
         def cmd_hook(line: str) -> None:
             orig_cmd(line)
-            if station.connected_addr is not None:
+            if station.connected_addr is not None and station._ingest_dongle_gatt():
                 station._ingest_gatt_serial_line(line)
 
         def scan_hook(line: str) -> None:
@@ -344,6 +368,11 @@ class BleuIoStation(Station):
             return True
         log.warning("Serial link dropped on %s (%s); reopening", self.id, context)
         return self._recover_serial()
+
+    def _ingest_dongle_gatt(self) -> bool:
+        if self._gatt_dongle_browse_active:
+            return True
+        return auto_browse_on_connect()
 
     def _request_gatt_browse(self) -> Any | None:
         if not self._maybe_recover_serial("gatt_browse"):
@@ -508,7 +537,7 @@ class BleuIoStation(Station):
         services = parse_gatt_browse("\n".join(self._gatt_lines))
         if services:
             self.services = services
-            if emit:
+            if emit and not self._connect_browse_pending:
                 self.emit("gatt", services=public_services(self.services))
         self._gatt_ready.set()
         return services
@@ -549,7 +578,74 @@ class BleuIoStation(Station):
             time.sleep(0.1)
         return bool(dongle is not None and getattr(dongle.status, "isConnected", False))
 
-    def _wait_for_gatt_browse(self, timeout: float = 20.0, idle_grace: float = 1.5) -> bool:
+    def _dongle_gatt_browse(self) -> list[dict[str, Any]]:
+        """Run GETSERVICES and wait for serial GATT dump (heavy — avoid on connect for large GATT)."""
+        self._gatt_dongle_browse_active = True
+        self._connect_browse_pending = True
+        self._gatt_lines = []
+        self._gatt_ready.clear()
+        try:
+            browse = None
+            if not self._gatt_ready.is_set() and not self._gatt_lines:
+                browse = self._request_gatt_browse()
+            if not self._wait_for_gatt_browse():
+                log.warning(
+                    "GATT browse timed out on %s (%d lines buffered)",
+                    self.id,
+                    len(self._gatt_lines),
+                )
+            services = parse_gatt_browse("\n".join(self._gatt_lines))
+            if not services and browse is not None:
+                services = parse_gatt_response(browse)
+            return services or []
+        finally:
+            self._gatt_dongle_browse_active = False
+
+    def _populate_gatt_after_connect(self) -> None:
+        mode = get_gatt_discovery_mode()
+        expected = get_expected_gatt_catalog()
+        if mode == "dongle" or (mode == "merge" and not expected):
+            discovered = self._dongle_gatt_browse()
+            if discovered:
+                self.services = discovered
+            if expected:
+                self.services = merge_discovered_with_expected(self.services, expected)
+        elif expected:
+            self.services = copy.deepcopy(expected)
+        else:
+            discovered = self._dongle_gatt_browse()
+            if discovered:
+                self.services = discovered
+
+    def _do_refresh_gatt(self) -> dict[str, Any]:
+        if not self.connected or not self.connected_addr:
+            return {"ok": False, "error": "Not connected", "services": []}
+        if not self._ensure_serial("gatt_refresh"):
+            return {"ok": False, "error": "Dongle serial link unavailable", "services": []}
+        discovered = self._dongle_gatt_browse()
+        expected = get_expected_gatt_catalog()
+        if expected:
+            self.services = merge_discovered_with_expected(discovered, expected)
+        elif discovered:
+            self.services = discovered
+        self._connect_browse_pending = False
+        pub = public_services(self.services)
+        self.emit("gatt", services=pub)
+        self.emit("station", station=self.snapshot())
+        return {
+            "ok": True,
+            "services": pub,
+            "gatt_discovery": get_gatt_discovery_mode(),
+            "dongle_lines": len(self._gatt_lines),
+        }
+
+    def _wait_for_gatt_browse(
+        self,
+        timeout: float | None = None,
+        idle_grace: float | None = None,
+    ) -> bool:
+        timeout = timeout if timeout is not None else GATT_BROWSE_TIMEOUT_SEC
+        idle_grace = idle_grace if idle_grace is not None else GATT_BROWSE_IDLE_SEC
         if self._gatt_ready.is_set():
             return True
         deadline = time.time() + timeout
@@ -634,7 +730,8 @@ class BleuIoStation(Station):
         objs = _as_dict_list(evt_input)
         if objs:
             text = json.dumps(objs)
-            self._ingest_gatt_from_objs([o for o in objs if isinstance(o, dict)])
+            if self._ingest_dongle_gatt():
+                self._ingest_gatt_from_objs([o for o in objs if isinstance(o, dict)])
             self._try_ingest_scan_evt([o for o in objs if isinstance(o, dict)])
         else:
             text = str(evt_input)
@@ -648,6 +745,8 @@ class BleuIoStation(Station):
         elif self._is_connected_action(text):
             self._note_connected(text)
         if "gattc_browse_completed" in lower or "gattc_discover_completed" in lower:
+            if not self._ingest_dongle_gatt():
+                return
             status_ok = bool(re.search(r"status\s*=\s*0\b", text, re.I)) or '"status":0' in text.replace(" ", "")
             if status_ok:
                 self._finalize_gatt()
@@ -655,11 +754,14 @@ class BleuIoStation(Station):
                 log.warning("GATT browse failed on %s: %s", self.id, text[:200])
                 self._gatt_ready.set()
         elif " serv " in f" {text} " or " char " in f" {text} " or " ---- " in f" {text} " or " desc " in f" {text} ":
+            if not self._ingest_dongle_gatt():
+                return
             self._ingest_gatt_fragment(text)
-            partial = parse_gatt_browse("\n".join(self._gatt_lines))
-            if partial:
-                self.services = partial
-                self.emit("gatt", services=public_services(self.services))
+            if not self._connect_browse_pending:
+                partial = parse_gatt_browse("\n".join(self._gatt_lines))
+                if partial:
+                    self.services = partial
+                    self.emit("gatt", services=public_services(self.services))
         if "noti" in lower or "indication" in lower or "handle_evt_gattc_notification" in lower:
             handle = None
             hex_val = ""
@@ -755,6 +857,7 @@ class BleuIoStation(Station):
         self._gatt_lines = []
         self._gatt_ready.clear()
         self._connect_ready.clear()
+        self._connect_browse_pending = True
         connect_err = None
         try:
             resp = self._dongle.at_gapconnect(address)
@@ -767,6 +870,7 @@ class BleuIoStation(Station):
         if isinstance(ack, dict) and ack.get("err") not in (0, None, "0"):
             ack_err = ack.get("errMsg") or str(ack.get("err"))
         if connect_err or ack_err:
+            self._connect_browse_pending = False
             self.connected = False
             self.connected_addr = None
             self.emit("connection", connected=False, address=address, raw=resp_text or connect_err or "")
@@ -774,24 +878,16 @@ class BleuIoStation(Station):
             return {"ok": False, "error": ack_err or connect_err, "address": address, "services": []}
         conn_ok = self._wait_for_connection(timeout=20.0)
         if not conn_ok:
+            self._connect_browse_pending = False
             self.connected = False
             self.connected_addr = None
             self.emit("connection", connected=False, address=address, raw="Connection timed out")
             self.emit("station", station=self.snapshot())
             return {"ok": False, "error": "Connection timed out", "address": address, "services": []}
-        time.sleep(0.2)
-        browse = None
-        if not self._gatt_ready.is_set() and not self._gatt_lines:
-            browse = self._request_gatt_browse()
-        if not self._wait_for_gatt_browse(timeout=20.0):
-            log.warning("GATT browse timed out on %s (%d lines buffered)", self.id, len(self._gatt_lines))
-        services = parse_gatt_browse("\n".join(self._gatt_lines))
-        if not services and browse is not None:
-            services = parse_gatt_response(browse)
-        if services:
-            self.services = services
+        self._populate_gatt_after_connect()
         self.connected = True
         pub = public_services(self.services)
+        self._connect_browse_pending = False
         # #region agent log
         _agent_dbg(
             "S4",
@@ -808,7 +904,12 @@ class BleuIoStation(Station):
         self.emit("connection", connected=True, address=address, raw=resp_text)
         self.emit("gatt", services=pub)
         self.emit("station", station=self.snapshot())
-        return {"ok": True, "address": address, "services": pub}
+        return {
+            "ok": True,
+            "address": address,
+            "services": pub,
+            "gatt_discovery": get_gatt_discovery_mode(),
+        }
 
     def _do_disconnect(self) -> dict[str, Any]:
         err = None
@@ -1001,6 +1102,9 @@ class BleuIoStation(Station):
 
     async def disconnect(self) -> dict[str, Any]:
         return await self._call("disconnect")
+
+    async def refresh_gatt(self) -> dict[str, Any]:
+        return await self._call("refresh_gatt")
 
     async def reset_idle(self) -> dict[str, Any]:
         try:

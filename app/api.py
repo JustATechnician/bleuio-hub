@@ -78,12 +78,37 @@ def _json(request: Request, payload: Any, status: int = 200) -> JSONResponse:
 
 @router.get("/api/health")
 async def health() -> dict[str, Any]:
+    from app.gatt_discovery import catalog_available, get_gatt_discovery_mode
+    from app.dongle.zephyr_map import get_expected_gatt_catalog
+
+    catalog = get_expected_gatt_catalog()
     return {
         "ok": True,
         "mock": hub.manager.mock,
         "stations": len(hub.manager.stations),
         "scan_default_sec": SCAN_DEFAULT_SEC,
+        "gatt_discovery": get_gatt_discovery_mode(),
+        "gatt_catalog_loaded": catalog_available(),
+        "expected_gatt": {
+            "services": len(catalog),
+            "characteristics": sum(len(s.get("characteristics") or []) for s in catalog),
+        },
     }
+
+
+@router.get("/api/expected-gatt")
+async def expected_gatt(request: Request) -> JSONResponse:
+    from app.dongle.parser import public_services
+    from app.dongle.zephyr_map import get_expected_gatt_catalog
+
+    session, created = hub.session_from_request(request)
+    catalog = get_expected_gatt_catalog()
+    payload = {
+        "services": public_services(catalog),
+        "service_count": len(catalog),
+        "characteristic_count": sum(len(s.get("characteristics") or []) for s in catalog),
+    }
+    return hub.attach_cookie(JSONResponse(payload), session, created)
 
 
 @router.get("/api/stations")
@@ -220,6 +245,16 @@ async def disconnect(station_id: str, request: Request) -> JSONResponse:
     hub.require_owner(station_id, session)
     result = await station.disconnect()
     return hub.attach_cookie(JSONResponse(result), session, created)
+
+
+@router.post("/api/stations/{station_id}/gatt/refresh")
+async def refresh_gatt(station_id: str, request: Request) -> JSONResponse:
+    _session, station = _owner_station(request, station_id)
+    try:
+        result = await station.refresh_gatt()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _json(request, result)
 
 
 @router.post("/api/stations/{station_id}/read")

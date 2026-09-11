@@ -20,6 +20,9 @@ logging.basicConfig(
 async def lifespan(app: FastAPI):
     config.MACROS_DIR.mkdir(parents=True, exist_ok=True)
     config.LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    from app.dongle.zephyr_map import get_expected_gatt_catalog
+
+    get_expected_gatt_catalog()
     await hub.manager.start()
     reaper = asyncio.create_task(idle_reaper())
     yield

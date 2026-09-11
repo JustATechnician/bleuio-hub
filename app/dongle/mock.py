@@ -274,6 +274,13 @@ class MockStation(Station):
             self.emit("station", station=self.snapshot())
             return {"ok": True}
 
+    async def refresh_gatt(self) -> dict[str, Any]:
+        async with self._lock:
+            if not self.connected:
+                return {"ok": False, "error": "Not connected", "services": []}
+            pub = public_services(self.services)
+            return {"ok": True, "services": pub, "gatt_discovery": "mock"}
+
     async def reset_idle(self) -> dict[str, Any]:
         await self.stop_scan()
         result = await self.disconnect()

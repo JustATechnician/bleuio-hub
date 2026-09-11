@@ -145,6 +145,11 @@ class Station(ABC):
         ...
 
     @abstractmethod
+    async def refresh_gatt(self) -> dict[str, Any]:
+        """Run dongle GATT browse and merge handles into the current service tree."""
+        ...
+
+    @abstractmethod
     async def reset_idle(self) -> dict[str, Any]:
         """Drop BLE links and scan, then mark this station idle (serial stays open)."""
         ...
